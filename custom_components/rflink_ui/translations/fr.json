@@ -1,0 +1,96 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "RFLink",
+        "description": "Sélectionnez le port série de votre passerelle RFLink.",
+        "data": {
+          "port": "Port"
+        }
+      },
+      "manual_port": {
+        "title": "Saisie manuelle du port",
+        "description": "Saisissez le chemin série (ex : /dev/serial/by-id/...) ou le socket ser2net (ex : socket://192.168.1.50:2001)",
+        "data": {
+          "port": "Port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter au port série."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Gérer les appareils RFLink",
+        "menu_options": {
+          "add_learned": "Ajouter un appareil détecté",
+          "add_manual": "Ajouter un appareil manuellement",
+          "modify": "Modifier l'ID d'un appareil",
+          "remove": "Supprimer un appareil"
+        }
+      },
+      "add_learned": {
+        "title": "Appareils récemment détectés",
+        "description": "Appuyez sur votre télécommande. Si rien n'apparaît, sélectionnez 'Actualiser' et validez.\n\nAttention: L'interface ne se met pas à jour toute seule, vous devez cliquer sur 'Actualiser'.",
+        "data": {
+          "device_id": "Sélectionnez l'appareil (ou une action)",
+          "name": "Nom de l'appareil (ex: Température Extérieure)"
+        }
+      },
+      "add_manual": {
+        "title": "Ajouter manuellement",
+        "data": {
+          "device_type": "Type d'appareil",
+          "device_id": "Identifiant RFLink (ex: Unitec_1a4a_4)",
+          "name": "Nom de l'appareil"
+        }
+      },
+      "modify": {
+        "title": "Modifier l'ID d'un appareil",
+        "data": {
+          "device_id": "Appareil à modifier",
+          "new_device_id": "Nouvel identifiant RFLink (ex: Unitec_1a4a_4)"
+        }
+      },
+      "remove": {
+        "title": "Supprimer un appareil",
+        "data": {
+          "device_id": "Appareil"
+        }
+      },
+      "light_options": {
+        "title": "Options de la lumière",
+        "data": {
+          "type": "Type de lumière (dimmable, hybrid, switchable, ou toggle)"
+        }
+      },
+      "binary_sensor_options": {
+        "title": "Options du capteur binaire",
+        "data": {
+          "device_class": "Classe de l'appareil",
+          "off_delay": "Délai d'extinction (secondes)"
+        }
+      },
+      "select_type": {
+        "title": "Sélectionner le type d'appareil",
+        "description": "Choisissez comment Home Assistant doit représenter cet appareil.",
+        "data": {
+          "device_type": "Type d'appareil"
+        }
+      },
+      "cover_options": {
+        "title": "Options du volet",
+        "data": {
+          "inverted": "Inverser le sens ouverture/fermeture"
+        }
+      }
+    },
+    "error": {
+      "no_devices_found": "Aucun signal RFLink inconnu récent n'a été détecté. Appuyez sur votre télécommande et réessayez.",
+      "no_configured_devices": "Aucun appareil n'est configuré.",
+      "cannot_connect": "Impossible de se connecter au port série"
+    }
+  }
+}
