@@ -4,6 +4,7 @@ from homeassistant.const import STATE_OFF, STATE_ON
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rflink_ui import DOMAIN
+from custom_components.rflink_ui.const import signal_connection
 
 
 async def test_connection_binary_sensor(hass, mock_serial_connection):
@@ -29,7 +30,7 @@ async def test_connection_binary_sensor(hass, mock_serial_connection):
     from homeassistant.helpers.dispatcher import dispatcher_send
     dispatcher_send(
         hass,
-        f"rflink_connection_{entry.entry_id}",
+        signal_connection(entry.entry_id),
         False
     )
     await hass.async_block_till_done()
@@ -40,7 +41,7 @@ async def test_connection_binary_sensor(hass, mock_serial_connection):
     # 3. Simulate reconnection dispatcher signal
     dispatcher_send(
         hass,
-        f"rflink_connection_{entry.entry_id}",
+        signal_connection(entry.entry_id),
         True
     )
     await hass.async_block_till_done()

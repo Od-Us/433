@@ -18,6 +18,9 @@
     },
     "error": {
       "cannot_connect": "Cannot connect to the serial port."
+    },
+    "abort": {
+      "already_configured": "This port is already configured."
     }
   },
   "options": {
@@ -28,7 +31,8 @@
           "add_learned": "Add recently detected device (Learning mode)",
           "add_manual": "Add device manually",
           "modify": "Modify a device ID",
-          "remove": "Remove device"
+          "remove": "Remove device",
+          "settings": "Gateway settings"
         }
       },
       "add_learned": {
@@ -85,12 +89,128 @@
         "data": {
           "inverted": "Invert open/close direction"
         }
+      },
+      "settings": {
+        "title": "Gateway settings",
+        "description": "Each RF command is sent this many times (the gateway acknowledges each one). Increase it if some receivers miss commands.",
+        "data": {
+          "repeats": "Signal repetitions"
+        }
+      },
+      "select_sensor_type": {
+        "title": "Select Device Type",
+        "description": "This device sends trigger-style data (motion, smoke, doorbell). Choose how Home Assistant should represent it.",
+        "data": {
+          "device_type": "Device Type"
+        }
+      },
+      "event_options": {
+        "title": "Event Options",
+        "description": "Fire events for button {button} only, or for every button of remote {remote}? With the whole remote, the pressed button is in the event's `button` attribute.",
+        "data": {
+          "whole_remote": "Listen to every button of this remote"
+        }
       }
     },
     "error": {
       "cannot_connect": "Cannot connect to the serial port.",
       "no_devices_found": "No recent unknown RFLink signals detected. Press your remote and try again.",
+      "invalid_device_id": "Invalid RFLink ID. Expected protocol_id_switch (e.g. Kaku_41_1), or protocol_id for sensors and events.",
+      "already_configured": "This RFLink ID is already configured."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
       "no_configured_devices": "No devices configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "Temperature"
+      },
+      "humidity": {
+        "name": "Humidity"
+      },
+      "humidity_status": {
+        "name": "Humidity status",
+        "state": {
+          "normal": "Normal",
+          "comfortable": "Comfortable",
+          "dry": "Dry",
+          "wet": "Wet"
+        }
+      },
+      "pressure": {
+        "name": "Pressure"
+      },
+      "forecast": {
+        "name": "Forecast",
+        "state": {
+          "no_info": "No information",
+          "sunny": "Sunny",
+          "partly_cloudy": "Partly cloudy",
+          "cloudy": "Cloudy",
+          "rain": "Rain"
+        }
+      },
+      "uv": {
+        "name": "UV index"
+      },
+      "illuminance": {
+        "name": "Illuminance"
+      },
+      "total_rain": {
+        "name": "Total rain"
+      },
+      "rain_rate": {
+        "name": "Rain rate"
+      },
+      "wind_speed": {
+        "name": "Wind speed"
+      },
+      "wind_average": {
+        "name": "Average wind speed"
+      },
+      "wind_gust": {
+        "name": "Wind gust"
+      },
+      "wind_direction": {
+        "name": "Wind direction"
+      },
+      "wind_chill": {
+        "name": "Wind chill"
+      },
+      "wind_temperature": {
+        "name": "Wind temperature"
+      },
+      "power": {
+        "name": "Power"
+      },
+      "battery": {
+        "name": "Battery"
+      }
+    },
+    "event": {
+      "remote": {
+        "state_attributes": {
+          "event_type": {
+            "name": "Event type",
+            "state": {
+              "on": "On",
+              "off": "Off",
+              "all_on": "All on",
+              "all_off": "All off",
+              "up": "Up",
+              "down": "Down",
+              "stop": "Stop",
+              "pair": "Pair",
+              "dim": "Dim",
+              "ring": "Ring",
+              "other": "Other"
+            }
+          }
+        }
+      }
     }
   }
 }

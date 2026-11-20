@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-from collections import deque
+from collections import OrderedDict
 
 from homeassistant import config_entries
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -132,16 +132,14 @@ async def test_options_flow_add_learned(hass, mock_serial_connection):
     )
     entry.add_to_hass(hass)
 
-    # Populate recent unknown devices in hass.data
-    mock_data = MagicMock()
-    mock_data.recent_unknown_devices = deque(
+    entry.runtime_data = MagicMock()
+    entry.runtime_data.hub.recent_devices = OrderedDict(
         [
             ("Kaku_learned_1", {"type": "switch", "data": {}}),
             ("Oregon_learned_2", {"type": "sensor", "data": {}}),
             ("RTS_learned_3", {"type": "cover", "data": {}}),
         ]
     )
-    hass.data[DOMAIN] = {entry.entry_id: mock_data}
 
     # 1. Test adding a Switch (needs select_type step)
     result = await hass.config_entries.options.async_init(entry.entry_id)
@@ -451,14 +449,12 @@ async def test_options_flow_add_learned_light(hass, mock_serial_connection):
     )
     entry.add_to_hass(hass)
 
-    # Populate recent unknown devices in hass.data
-    mock_data = MagicMock()
-    mock_data.recent_unknown_devices = deque(
+    entry.runtime_data = MagicMock()
+    entry.runtime_data.hub.recent_devices = OrderedDict(
         [
             ("Kaku_learned_1", {"type": "switch", "data": {}}),
         ]
     )
-    hass.data[DOMAIN] = {entry.entry_id: mock_data}
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
 

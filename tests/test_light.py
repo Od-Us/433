@@ -6,6 +6,7 @@ from homeassistant.core import State
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rflink_ui import DOMAIN
+from custom_components.rflink_ui.const import signal_update
 
 
 async def test_light_setup_and_control(hass, mock_serial_connection):
@@ -41,14 +42,14 @@ async def test_light_setup_and_control(hass, mock_serial_connection):
     # 2. Simulate dispatcher update (Turn ON)
     from homeassistant.helpers.dispatcher import dispatcher_send
 
-    dispatcher_send(hass, "rflink_update_Unitec_1a4a_4", {"CMD": "ON"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "Unitec_1a4a_4"), {"CMD": "ON"})
     await hass.async_block_till_done()
 
     state = hass.states.get("light.living_room_dimmer")
     assert state.state == STATE_ON
 
     # Simulate dispatcher update (SET_LEVEL)
-    dispatcher_send(hass, "rflink_update_Unitec_1a4a_4", {"CMD": "SET_LEVEL=10"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "Unitec_1a4a_4"), {"CMD": "SET_LEVEL=10"})
     await hass.async_block_till_done()
 
     state = hass.states.get("light.living_room_dimmer")
@@ -56,7 +57,7 @@ async def test_light_setup_and_control(hass, mock_serial_connection):
     assert state.attributes.get("brightness") == 170  # 10 * 17
 
     # Simulate dispatcher update (raw level digit)
-    dispatcher_send(hass, "rflink_update_Unitec_1a4a_4", {"CMD": "15"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "Unitec_1a4a_4"), {"CMD": "15"})
     await hass.async_block_till_done()
 
     state = hass.states.get("light.living_room_dimmer")
@@ -64,7 +65,7 @@ async def test_light_setup_and_control(hass, mock_serial_connection):
     assert state.attributes.get("brightness") == 255  # 15 * 17
 
     # Simulate dispatcher update (Turn OFF)
-    dispatcher_send(hass, "rflink_update_Unitec_1a4a_4", {"CMD": "OFF"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "Unitec_1a4a_4"), {"CMD": "OFF"})
     await hass.async_block_till_done()
 
     state = hass.states.get("light.living_room_dimmer")
@@ -182,7 +183,7 @@ async def test_light_setup_and_control(hass, mock_serial_connection):
     assert b"10;Livolo;456;4;ON;\n" in writer.written
 
     # Test toggle state updates via dispatcher
-    dispatcher_send(hass, "rflink_update_Livolo_456_4", {"CMD": "ON"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "Livolo_456_4"), {"CMD": "ON"})
     await hass.async_block_till_done()
     state = hass.states.get("light.living_room_livolo")
     assert state.state == STATE_ON

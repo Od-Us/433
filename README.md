@@ -1,5 +1,7 @@
 # 🏠 Home Assistant RFLink UI
 
+> Fork of [guanaco0403/Home-Assistant-Rflink-UI](https://github.com/guanaco0403/Home-Assistant-Rflink-UI) with a more reliable gateway link, event entities and on-demand sensors.
+
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 
@@ -18,7 +20,10 @@ This integration uses the `serialx` library for robust, non-blocking asynchronou
 - 📡 **Connects to any standard Arduino RFLink gateway** via USB/Serial or network sockets (`ser2net`)
 - 🔍 **Auto-Discovery Mode**: Discovers recently received signals, displays them as clean device IDs, and lets you choose their entity type (Switch, Cover, Binary Sensor, or Light) and configuration parameters right from the UI!
 - ✍️ **Manual Addition**: Add your switches, covers, and sensors manually if you already know their protocol and IDs
-- 🔄 **Async Serial Polling**: Non-blocking connection using `serialx` with automatic background reconnects and keep-alive pings
+- 🔄 **Reliable link**: commands are queued one at a time and each one waits for the gateway acknowledgement (`20;xx;OK;`); a rejected or unacknowledged command is reported as an error instead of silently changing the entity state. PING/PONG watchdog, firmware handshake, automatic reconnection with back-off.
+- 🔁 **Signal repetitions**: send each command up to 10 times for receivers with poor reception (Configure → Gateway settings).
+- ➕ **No reload when editing devices**: adding, renaming or removing a device updates the entities live, without closing the serial port (which would reboot most Arduino boards).
+- 🎛️ **Event entities**: RF remotes, wall buttons and doorbells fire an event on every press, ideal for automations.
 - 📻 **Custom Commands**: Send any raw RF command using the `rflink_ui.send_command` service.
 - 🟢 **Connection Sensor**: Includes a binary sensor to monitor the gateway's connection status in real-time
 - 🧪 **Packet Simulation**: Built-in service (`rflink_ui.simulate_packet`) to inject mock RF packets for easy testing and debugging without physical hardware.
@@ -28,7 +33,7 @@ This integration uses the `serialx` library for robust, non-blocking asynchronou
 ## 🏷 Supported Platforms & Entities
 
 - **`cover`** — Creates motorized cover, roller shutter, and blind entities (e.g., Somfy RTS, Brell). Supports Open (`UP`), Close (`DOWN`), and Stop (`STOP`) commands, live movement state tracking (`opening`, `closing`, `stopped`), state restoration, and an optional **invert open/close direction** setting directly in the UI.
-- **`sensor`** — Creates dedicated `Temperature` (in °C), `Humidity` (in %), and `Battery` status entities for numerical climate sensors (e.g., Oregon Scientific, Cresta). Extra fields like wind or pressure are stored as attributes on these entities.
+- **`sensor`** — Entities are created **on demand**, one per measurement the device actually sends: temperature, humidity, humidity status, pressure, forecast, UV index, illuminance, total rain, rain rate, wind speed / average / gust / direction, wind chill, wind temperature, power and battery (e.g., Oregon Scientific, Cresta, Auriol, Alecto). Unknown fields are kept as attributes. Placeholder entities created by older releases for values a device never sent are cleaned up.
 - **`switch`** — Creates control entities for writable RF outlets, relays, and lights (e.g., Kaku, Unitec, Chacon) so you can trigger them or sync their state with physical remotes.
 - **`light`** — Creates dimmer and switch-like light entities (e.g., KlikAanKlikUit dimmers, Nexa wall plugs, Livolo switches). Supports brightness dimming level control and offers four configurable light command styles to accommodate different hardware behaviors:
   - **`dimmable`**: Sends direct numeric brightness levels (`0-15`).
@@ -38,6 +43,7 @@ This integration uses the `serialx` library for robust, non-blocking asynchronou
 - **`binary_sensor`** — Covers status monitoring:
   - **Gateway Connection**: A connectivity sensor tracking the serial port connection to the RFLink gateway.
   - **RF Devices**: Any binary state sensor (e.g., PIR motion detectors, door/window opening contacts, smoke detectors, water leak sensors, doorbells). Fully supports configurable `device_class` and `off_delay` for trigger-only sensors.
+- **`event`** — Fires an event every time an RF button is pressed (event types `on`, `off`, `all_on`, `all_off`, `up`, `down`, `stop`, `dim`, `pair`, `ring`, `other`). Configure either one button (`Kaku_41_1`) or **every button of a remote** (`Kaku_41`, the pressed button is in the `button` attribute). Doorbells sending `CHIME=` fire `ring`.
 - **`radio_frequency`** *(New in Home Assistant 2026.5.0)* — Exposes the main gateway transmitter entity to allow broadcasting custom RF payloads using standard actions.
 
 ## ⚠️ Warning
@@ -56,10 +62,10 @@ This integration uses the `serialx` library for robust, non-blocking asynchronou
 ## 📦 Installation
 
 ### Option 1: HACS (Recommended for Users)
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?repository=Home-Assistant-Rflink-UI&owner=guanaco0403&category=integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?repository=433&owner=Od-Us&category=integration)
 
 1. Go to **HACS > Integrations > Custom repositories**
-2. Add this repo URL: `https://github.com/guanaco0403/Home-Assistant-Rflink-UI`
+2. Add this repo URL: `https://github.com/Od-Us/433`
 3. Select category: **Integration**
 4. Click **Add**
 5. Install the `RFLink UI` integration
@@ -92,6 +98,9 @@ Once configured, click **Configure** on the integration card to:
 - **Add device manually**: Manually type in the Protocol and ID (supports custom naming, light dimming styles, and cover direction inversion).
 - **Modify device ID**: Rename or remap an existing device's RFLink ID.
 - **Remove device**: Delete an existing device from the integration.
+- **Gateway settings**: Number of times each RF command is sent (1–10).
+
+Devices that send trigger-style data (`PIR=`, `SMOKEALERT=`, `CHIME=`) can be added from the learning mode as a binary sensor or an event.
 
 ---
 
@@ -112,7 +121,7 @@ data:
 
 ## 🛠 Action: `rflink_ui.simulate_packet`
 
-You can simulate receiving a raw RFLink packet string in the integration. This is highly useful for testing or auto-discovering devices without physical hardware.
+You can simulate receiving a raw RFLink packet string in the integration. This is highly useful for testing or auto-discovering devices without physical hardware. With several gateways, `config_entry_id` selects which one receives it (all by default).
 
 ### Example:
 
@@ -122,15 +131,34 @@ data:
   packet: "20;01;Kaku;ID=1234abcd;SWITCH=1;CMD=ON;"
 ```
 
+## 📨 Event: `rflink_ui_received`
+
+Every decoded RF packet, including those of devices that are not configured, is fired on the Home Assistant event bus:
+
+```yaml
+trigger:
+  - trigger: event
+    event_type: rflink_ui_received
+    event_data:
+      device_id: Kaku_41_1
+```
+
+Event data: `config_entry_id`, `device_id`, `protocol`, `type`, `fields` (decoded key/values) and `packet` (raw line).
+
+## 🩺 Gateway diagnostics
+
+The *Connection status* binary sensor exposes the firmware version and counters as attributes: `sent`, `acked`, `no_ack`, `rejected`, `reconnects`.
+
 ## 📌 Integration Type & Quality
 
 - Integration Type: hub
 - Quality Scale: bronze
 - IoT Class: local_push
 
-## 🧑‍💻 Code Owner
+## 🧑‍💻 Credits
 
-- @guanaco0403
+- Original integration by [guanaco0403](https://github.com/guanaco0403/Home-Assistant-Rflink-UI) (MIT).
+- This fork (1.3.0+): reliability rework, event entities and dynamic sensors.
 
 ## 🪪 License
 
@@ -143,6 +171,14 @@ Pull requests are welcome! If you want to improve signal parsing, add support fo
 ## 🧪 Testing & Development
 
 This repository includes a dedicated test runner (`scripts/test_runner.py`) that automatically sets up an isolated virtual environment (`.venv_ha_test`), installs the specified Home Assistant version, and configures dependencies.
+
+### Unit tests without Home Assistant
+
+The RFLink parser (`protocol.py`) and the connection hub (`hub.py`) do not depend on Home Assistant and have their own fast test suite:
+
+```bash
+python -m pytest tests_unit
+```
 
 ### Running the Test Runner
 

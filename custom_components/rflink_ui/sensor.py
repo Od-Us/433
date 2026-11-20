@@ -1,194 +1,318 @@
-"""Sensor platform for RFLink UI."""
+"""Sensor platform for RFLink UI.
+
+Entities are created on demand: a configured sensor device gets one entity per
+measurement it actually transmits (temperature, humidity, wind, rain, ...).
+Entities created by previous releases are restored at startup.
+"""
+
+from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorStateClass,
-    RestoreSensor,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    UnitOfTemperature,
-    UnitOfPrecipitationDepth,
+    DEGREE,
+    LIGHT_LUX,
     PERCENTAGE,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+    UV_INDEX,
+    UnitOfPower,
+    UnitOfPrecipitationDepth,
+    UnitOfPressure,
+    UnitOfSpeed,
+    UnitOfTemperature,
+    UnitOfVolumetricFlux,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import async_get as async_get_restore_data
 
-from . import DOMAIN
+from . import RFLinkConfigEntry
+from .const import (
+    DOMAIN,
+    OPT_SENSORS,
+    SENSOR_UNIQUE_ID_PREFIX,
+    device_config_name,
+    signal_update,
+)
+from .entity import DeviceHandle, RFLinkEntity, async_setup_dynamic_platform
+from .protocol import FORECAST, HUMIDITY_STATUS, SENSOR_FIELDS, decode_sensor_values
 
 _LOGGER = logging.getLogger(__name__)
+
+# Present in recent Home Assistant releases only.
+_WIND_DIRECTION_CLASS = getattr(SensorDeviceClass, "WIND_DIRECTION", None)
+_ANGLE_STATE_CLASS = getattr(SensorStateClass, "MEASUREMENT_ANGLE", None)
+
+# Sensors created unconditionally by releases <= 1.2.x.
+LEGACY_KEYS = ("temperature", "humidity", "battery", "total_rain")
+
+
+@dataclass(frozen=True)
+class SensorSpec:
+    device_class: SensorDeviceClass | None = None
+    state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT
+    unit: str | None = None
+    icon: str | None = None
+    options: tuple[str, ...] | None = None
+
+
+SENSOR_SPECS: dict[str, SensorSpec] = {
+    "temperature": SensorSpec(
+        SensorDeviceClass.TEMPERATURE, unit=UnitOfTemperature.CELSIUS
+    ),
+    "humidity": SensorSpec(SensorDeviceClass.HUMIDITY, unit=PERCENTAGE),
+    "humidity_status": SensorSpec(
+        SensorDeviceClass.ENUM, None, options=tuple(HUMIDITY_STATUS.values())
+    ),
+    "pressure": SensorSpec(
+        SensorDeviceClass.ATMOSPHERIC_PRESSURE, unit=UnitOfPressure.HPA
+    ),
+    "forecast": SensorSpec(
+        SensorDeviceClass.ENUM, None, options=tuple(FORECAST.values())
+    ),
+    "uv": SensorSpec(unit=UV_INDEX, icon="mdi:weather-sunny-alert"),
+    "illuminance": SensorSpec(SensorDeviceClass.ILLUMINANCE, unit=LIGHT_LUX),
+    "total_rain": SensorSpec(
+        SensorDeviceClass.PRECIPITATION,
+        SensorStateClass.TOTAL_INCREASING,
+        UnitOfPrecipitationDepth.MILLIMETERS,
+    ),
+    "rain_rate": SensorSpec(
+        SensorDeviceClass.PRECIPITATION_INTENSITY,
+        unit=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
+    ),
+    "wind_speed": SensorSpec(
+        SensorDeviceClass.WIND_SPEED, unit=UnitOfSpeed.KILOMETERS_PER_HOUR
+    ),
+    "wind_average": SensorSpec(
+        SensorDeviceClass.WIND_SPEED, unit=UnitOfSpeed.KILOMETERS_PER_HOUR
+    ),
+    "wind_gust": SensorSpec(
+        SensorDeviceClass.WIND_SPEED, unit=UnitOfSpeed.KILOMETERS_PER_HOUR
+    ),
+    "wind_direction": SensorSpec(
+        _WIND_DIRECTION_CLASS, _ANGLE_STATE_CLASS, DEGREE, icon="mdi:compass-outline"
+    ),
+    "wind_chill": SensorSpec(
+        SensorDeviceClass.TEMPERATURE, unit=UnitOfTemperature.CELSIUS
+    ),
+    "wind_temperature": SensorSpec(
+        SensorDeviceClass.TEMPERATURE, unit=UnitOfTemperature.CELSIUS
+    ),
+    "power": SensorSpec(SensorDeviceClass.POWER, unit=UnitOfPower.WATT),
+    "battery": SensorSpec(state_class=None, icon="mdi:battery"),
+}
+assert set(SENSOR_SPECS) == {f.key for f in SENSOR_FIELDS}
+
+
+def sensor_unique_id(key: str, device_id: str) -> str:
+    return f"{SENSOR_UNIQUE_ID_PREFIX}{key}_{device_id}"
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: RFLinkConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the RFLink sensor platform."""
-    sensors = entry.options.get("sensors", {})
+    ent_reg = er.async_get(hass)
+    try:
+        last_states = async_get_restore_data(hass).last_states
+    except Exception:  # noqa: BLE001 - restore data not available
+        last_states = {}
+    # Legacy placeholder cleanup is based on the states saved at startup, so it
+    # is only applied while the platform is being set up.
+    setup = {"initial": True}
 
-    entities = []
-    for device_id, name in sensors.items():
-        entities.append(RFLinkSensor(entry.entry_id, device_id, name, "temperature"))
-        entities.append(RFLinkSensor(entry.entry_id, device_id, name, "humidity"))
-        entities.append(RFLinkSensor(entry.entry_id, device_id, name, "battery"))
-        entities.append(RFLinkSensor(entry.entry_id, device_id, name, "total_rain"))
+    def existing_keys(device_id: str) -> list[str]:
+        """Keys of entities already registered for this device."""
+        keys = []
+        for key in SENSOR_SPECS:
+            entity_id = ent_reg.async_get_entity_id(
+                "sensor", DOMAIN, sensor_unique_id(key, device_id)
+            )
+            if entity_id is None:
+                continue
+            stored = last_states.get(entity_id)
+            if (
+                setup["initial"]
+                and key in LEGACY_KEYS
+                and (
+                    stored is None
+                    or stored.state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE)
+                )
+            ):
+                # Placeholder created by an old release for a value this device
+                # never sent: drop it. It is re-created if the value shows up.
+                ent_reg.async_remove(entity_id)
+                continue
+            keys.append(key)
+        return keys
 
-    if entities:
-        async_add_entities(entities)
+    def factory(device_id: str, config: Any) -> DeviceHandle:
+        manager = SensorDeviceManager(
+            hass,
+            entry,
+            device_id,
+            device_config_name(config, device_id),
+            async_add_entities,
+        )
+        handle = DeviceHandle(manager.entities_list)
+        for key in existing_keys(device_id):
+            manager.create(key)
+        handle.unsubs.append(manager.start())
+        return handle
+
+    await async_setup_dynamic_platform(
+        hass, entry, async_add_entities, OPT_SENSORS, factory
+    )
+    setup["initial"] = False
 
 
-class RFLinkSensor(RestoreSensor):
-    """Representation of an RFLink sensor."""
-
-    _attr_has_entity_name = True
-    _attr_should_poll = False
-    _attr_force_update = True
+class SensorDeviceManager:
+    """Routes packets of one sensor device and creates entities on demand."""
 
     def __init__(
-        self, entry_id: str, device_id: str, name: str, sensor_type: str
+        self,
+        hass: HomeAssistant,
+        entry: RFLinkConfigEntry,
+        device_id: str,
+        name: str,
+        async_add_entities: AddEntitiesCallback,
     ) -> None:
-        """Initialize the sensor."""
-        self._device_id = device_id
-        self._original_name = name
-        self._sensor_type = sensor_type
+        self.hass = hass
+        self.entry = entry
+        self.device_id = device_id
+        self.name = name
+        self.protocol = device_id.rsplit("_", 1)[0]
+        self.async_add_entities = async_add_entities
+        self.entities: dict[str, RFLinkSensor] = {}
+        # Shared with the DeviceHandle so that entities created later are
+        # removed together with the device.
+        self.entities_list: list[RFLinkSensor] = []
+        self._started = False
 
-        # Name of the entity, e.g. "Temperature" or "Humidity"
-        if sensor_type == "temperature":
-            self._attr_name = "Temperature"
-            self._attr_device_class = SensorDeviceClass.TEMPERATURE
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-        elif sensor_type == "humidity":
-            self._attr_name = "Humidity"
-            self._attr_device_class = SensorDeviceClass.HUMIDITY
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_native_unit_of_measurement = PERCENTAGE
-        elif sensor_type == "battery":
-            self._attr_name = "Battery"
-            self._attr_icon = "mdi:battery"
-        elif sensor_type in ["total_rain", "rain"]:
-            self._attr_name = "Total Rain"
-            self._attr_device_class = SensorDeviceClass.PRECIPITATION
-            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-            self._attr_native_unit_of_measurement = UnitOfPrecipitationDepth.MILLIMETERS
-        else:
-            self._attr_name = sensor_type.capitalize()
+    def create(
+        self, key: str, value: Any = None, attrs: dict | None = None
+    ) -> RFLinkSensor:
+        entity = RFLinkSensor(self.entry, self.device_id, self.name, self.protocol, key)
+        if value is not None:
+            entity.set_value(value, attrs or {})
+        self.entities[key] = entity
+        self.entities_list.append(entity)
+        return entity
 
-        self._attr_unique_id = f"rflink_sensor_{sensor_type}_{device_id}"
-        self._attr_native_value = None
-        self._attr_extra_state_attributes = {}
-
-        # device_id could be F007_TH_45291. Splitting by "_" gives parts.
-        parts = device_id.rsplit("_", 1)
-        if len(parts) >= 2:
-            self._protocol = parts[0]
-            self._rflink_id = parts[1]
-        else:
-            self._protocol = "Unknown"
-            self._rflink_id = "0"
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information about this RFLink device."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            name=self._original_name,
-            manufacturer="RFLink",
-            model=self._protocol,
-        )
-
-    async def async_added_to_hass(self) -> None:
-        """Run when entity about to be added to hass."""
-        await super().async_added_to_hass()
-
-        last_sensor_data = await self.async_get_last_sensor_data()
-        if last_sensor_data is not None:
-            self._attr_native_value = last_sensor_data.native_value
-
-        last_state = await self.async_get_last_state()
-        if last_state is not None:
-            # Restore attributes like battery, etc.
-            self._attr_extra_state_attributes = dict(last_state.attributes)
-
-        self.async_on_remove(
-            async_dispatcher_connect(
-                self.hass,
-                f"rflink_update_{self._device_id}",
-                self._handle_rflink_update,
-            )
+    def start(self):
+        self._started = True
+        return async_dispatcher_connect(
+            self.hass, signal_update(self.entry.entry_id, self.device_id), self._handle
         )
 
     @callback
-    def _handle_rflink_update(self, data_dict: dict[str, str]) -> None:
-        """Handle updated data from RFLink."""
-        _LOGGER.debug(
-            "Sensor %s (%s) received update: %s",
-            self._device_id,
-            self._sensor_type,
-            data_dict,
-        )
+    def _handle(self, data: dict[str, str]) -> None:
+        values, extra = decode_sensor_values(data)
+        _LOGGER.debug("Sensor %s received %s", self.device_id, values)
+        attrs = dict(extra)
+        if "battery" in values:
+            attrs["battery"] = values["battery"]
+        new: list[RFLinkSensor] = []
+        for key, value in values.items():
+            if key not in SENSOR_SPECS:
+                continue
+            if (entity := self.entities.get(key)) is None:
+                new.append(self.create(key, value, attrs))
+            else:
+                entity.async_update_value(value, attrs)
+        if new:
+            _LOGGER.info(
+                "RFLink sensor %s: adding %s",
+                self.device_id,
+                ", ".join(e.key for e in new),
+            )
+            self.async_add_entities(new)
 
-        attributes = dict(self._attr_extra_state_attributes)
-        has_update = False
 
-        if self._sensor_type == "temperature":
-            if "TEMP" in data_dict:
-                try:
-                    temp_hex = data_dict["TEMP"]
-                    temp_int = int(temp_hex, 16)
-                    if temp_int & 0x8000:
-                        temp_val = -(temp_int & 0x7FFF) / 10.0
-                    else:
-                        temp_val = temp_int / 10.0
-                    self._attr_native_value = temp_val
-                    has_update = True
-                except ValueError:
-                    attributes["temperature_raw"] = data_dict["TEMP"]
+class RFLinkSensor(RFLinkEntity, RestoreSensor):
+    """One measurement of an RFLink sensor device."""
 
-        elif self._sensor_type == "humidity":
-            if "HUM" in data_dict:
-                try:
-                    hum_int = int(data_dict["HUM"])
-                    self._attr_native_value = hum_int
-                    has_update = True
-                except ValueError:
-                    attributes["humidity_raw"] = data_dict["HUM"]
+    _attr_force_update = True
+    _subscribe_updates = False
 
-        elif self._sensor_type == "battery":
-            if "BAT" in data_dict:
-                self._attr_native_value = data_dict["BAT"]
-                has_update = True
+    def __init__(
+        self,
+        entry: RFLinkConfigEntry,
+        device_id: str,
+        name: str,
+        protocol: str,
+        key: str,
+    ) -> None:
+        super().__init__(entry, device_id, name, protocol)
+        self.key = key
+        spec = SENSOR_SPECS[key]
+        self._attr_translation_key = key
+        self._attr_unique_id = sensor_unique_id(key, device_id)
+        self._attr_device_class = spec.device_class
+        self._attr_state_class = spec.state_class
+        self._attr_native_unit_of_measurement = spec.unit
+        if spec.icon:
+            self._attr_icon = spec.icon
+        if spec.options:
+            self._attr_options = list(spec.options)
+        self._attr_native_value = None
+        self._attr_extra_state_attributes = {}
+        self._has_value = False
 
-        elif self._sensor_type in ["total_rain", "rain"]:
-            if "RAIN" in data_dict:
-                try:
-                    rain_hex = data_dict["RAIN"]
-                    rain_int = int(rain_hex, 16)
-                    self._attr_native_value = rain_int / 10.0
-                    has_update = True
-                except ValueError:
-                    try:
-                        self._attr_native_value = float(data_dict["RAIN"]) / 10.0
-                        has_update = True
-                    except ValueError:
-                        attributes["rain_raw"] = data_dict["RAIN"]
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._has_value:
+            return
+        if (data := await self.async_get_last_sensor_data()) is not None:
+            self._attr_native_value = data.native_value
+        if (state := await self.async_get_last_state()) is not None:
+            self._attr_extra_state_attributes = {
+                k: v
+                for k, v in state.attributes.items()
+                if k
+                not in (
+                    "unit_of_measurement",
+                    "device_class",
+                    "state_class",
+                    "friendly_name",
+                    "icon",
+                    "options",
+                )
+            }
 
-        if "BAT" in data_dict:
-            attributes["battery"] = data_dict["BAT"]
-            has_update = True
+    def set_value(self, value: Any, attrs: dict[str, Any]) -> None:
+        self._attr_native_value = value
+        self._attr_extra_state_attributes = {
+            **self._attr_extra_state_attributes,
+            **attrs,
+        }
+        self._has_value = True
 
-        # Store any other unknown values
-        for key, value in data_dict.items():
-            if key not in ["ID", "TEMP", "HUM", "BAT", "RAIN"]:
-                attributes[key.lower()] = value
-                has_update = True
-
-        self._attr_extra_state_attributes = attributes
-
-        if has_update or self._attr_native_value is not None:
+    @callback
+    def async_update_value(self, value: Any, attrs: dict[str, Any]) -> None:
+        self.set_value(value, attrs)
+        if self.hass is not None:
             self.async_write_ha_state()
+
+    @property
+    def icon(self) -> str | None:
+        if self.key == "battery":
+            return (
+                "mdi:battery-alert"
+                if self._attr_native_value == "LOW"
+                else "mdi:battery"
+            )
+        return super().icon

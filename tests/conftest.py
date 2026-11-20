@@ -29,14 +29,33 @@ class MockStreamReader:
 
 
 class MockStreamWriter:
-    """Mock StreamWriter that records written bytes."""
+    """Mock StreamWriter that records written bytes.
 
-    def __init__(self):
+    Like a real RFLink board, it answers every ``10;`` frame on the paired
+    reader (VERSION -> VER=..., PING -> PONG, anything else -> OK), because the
+    integration waits for these acknowledgements.
+    """
+
+    def __init__(self, reader: "MockStreamReader | None" = None):
         self.written = []
         self._closed = False
+        self._reader = reader
+        self.auto_reply = True
+        self._counter = 0
 
     def write(self, data: bytes) -> None:
         self.written.append(data)
+        frame = data.decode("utf-8", errors="ignore").strip()
+        if not (self.auto_reply and self._reader and frame.startswith("10;")):
+            return
+        self._counter = (self._counter + 1) % 256
+        if frame == "10;VERSION;":
+            reply = "VER=1.1;REV=48;BUILD=0c"
+        elif frame == "10;PING;":
+            reply = "PONG"
+        else:
+            reply = "OK"
+        self._reader.feed_line(f"20;{self._counter:02X};{reply};")
 
     async def drain(self) -> None:
         await asyncio.sleep(0.001)
@@ -52,7 +71,7 @@ class MockStreamWriter:
 def mock_serial_connection():
     """Mock serial / serialx connection and discovery."""
     reader = MockStreamReader()
-    writer = MockStreamWriter()
+    writer = MockStreamWriter(reader)
 
     # Mock open_serial_connection
     async def mock_open(url, baudrate, **kwargs):

@@ -3,7 +3,8 @@ import asyncio
 from homeassistant.config_entries import ConfigEntryState
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.rflink_ui import DOMAIN, RFLinkData
+from custom_components.rflink_ui import DOMAIN
+from custom_components.rflink_ui.hub import RFLinkHub
 
 
 async def test_setup_unload_entry(hass, mock_serial_connection):
@@ -21,19 +22,19 @@ async def test_setup_unload_entry(hass, mock_serial_connection):
 
     # Verify connection was established (mocked) and state is loaded
     assert entry.state is ConfigEntryState.LOADED
-    data = hass.data[DOMAIN][entry.entry_id]
-    assert isinstance(data, RFLinkData)
+    data = entry.runtime_data.hub
+    assert isinstance(data, RFLinkHub)
 
     # Wait a small amount of time for the connection loop to run open_serial_connection
     await asyncio.sleep(0.01)
-    assert data.is_connected is True
+    assert data.connected is True
 
     # Unload the entry
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.NOT_LOADED
-    assert entry.entry_id not in hass.data[DOMAIN]
+    assert data.connected is False
 
 
 async def test_serial_read_and_dispatch(hass, mock_serial_connection):
@@ -49,7 +50,7 @@ async def test_serial_read_and_dispatch(hass, mock_serial_connection):
     await hass.async_block_till_done()
     await asyncio.sleep(0.01)
 
-    data = hass.data[DOMAIN][entry.entry_id]
+    data = entry.runtime_data.hub
 
     # Verify dispatcher is called when we write to the mock reader
     # We will simulate receiving a switch command from RFLink
@@ -60,8 +61,8 @@ async def test_serial_read_and_dispatch(hass, mock_serial_connection):
     await asyncio.sleep(0.01)
 
     # Check if the device was added to the recent unknown devices deque
-    assert len(data.recent_unknown_devices) == 1
-    device_id, info = data.recent_unknown_devices[0]
+    assert len(data.recent_devices) == 1
+    device_id, info = list(data.recent_devices.items())[0]
     assert device_id == "Kaku_41_1"
     assert info["type"] == "switch"
     assert info["data"]["CMD"] == "ON"
@@ -73,8 +74,8 @@ async def test_serial_read_and_dispatch(hass, mock_serial_connection):
     )
     await asyncio.sleep(0.01)
 
-    assert len(data.recent_unknown_devices) == 2
-    device_id, info = data.recent_unknown_devices[1]  # most recent is at index 1
+    assert len(data.recent_devices) == 2
+    device_id, info = list(data.recent_devices.items())[1]  # most recent is at index 1
     assert device_id == "Oregon TempHygro_0A4C"
     assert info["type"] == "sensor"
     assert info["data"]["TEMP"] == "00ba"
@@ -85,8 +86,8 @@ async def test_serial_read_and_dispatch(hass, mock_serial_connection):
     mock_serial_connection["reader"].feed_line("20;3B;RTS;ID=0A4B;SWITCH=0;CMD=UP;")
     await asyncio.sleep(0.01)
 
-    assert len(data.recent_unknown_devices) == 3
-    device_id, info = data.recent_unknown_devices[2]
+    assert len(data.recent_devices) == 3
+    device_id, info = list(data.recent_devices.items())[2]
     assert device_id == "RTS_0A4B_0"
     assert info["type"] == "cover"
     assert info["data"]["CMD"] == "UP"

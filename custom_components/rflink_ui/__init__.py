@@ -1,20 +1,46 @@
 """The RFLink UI integration."""
 
-import asyncio
+from __future__ import annotations
+
 import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+
 import serialx
-from dataclasses import dataclass
-
-from collections import deque
-
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_PORT, Platform
-from homeassistant.core import HomeAssistant
+import voluptuous as vol
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.const import CONF_PORT, EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.typing import ConfigType
+
+from .const import (
+    CONF_REPEATS,
+    DEFAULT_REPEATS,
+    DEVICE_OPTION_KEYS,
+    DOMAIN,
+    EVENT_RECEIVED,
+    OPT_SENSORS,
+    OPT_SETTINGS,
+    SENSOR_UNIQUE_ID_PREFIX,
+    UNIQUE_ID_PREFIXES,
+    signal_connection,
+    signal_remote,
+    signal_update,
+)
+from .hub import RFLinkHub
+from .protocol import SENSOR_FIELDS, Packet
 
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "rflink_ui"
+__all__ = ["DOMAIN", "RFLinkRuntimeData"]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
 PLATFORMS: list[Platform] = [
     Platform("radio_frequency"),
     Platform.SWITCH,
@@ -22,288 +48,183 @@ PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.LIGHT,
     Platform.COVER,
+    Platform.EVENT,
 ]
+
+SERVICE_SIMULATE_PACKET = "simulate_packet"
+ATTR_PACKET = "packet"
+ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+
+SIMULATE_PACKET_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_PACKET): cv.string,
+        vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
+    }
+)
 
 
 @dataclass
-class RFLinkData:
-    """Class to hold RFLink data."""
+class RFLinkRuntimeData:
+    """Runtime data stored on the config entry."""
 
-    writer: asyncio.StreamWriter | None
-    reader: asyncio.StreamReader | None
-    recent_unknown_devices: deque
-    reconnect_task: asyncio.Task | None
-    keep_alive_task: asyncio.Task | None
-    is_connected: bool
-
-    async def async_send_command(self, command: str) -> None:
-        """Send an RF command via RFLink safely."""
-        if not self.writer or not self.is_connected:
-            _LOGGER.error("Cannot send command, RFLink is disconnected")
-            return
-
-        _LOGGER.debug("Sending RF command: %s", command.strip())
-        try:
-            self.writer.write(command.encode("utf-8"))
-            await self.writer.drain()
-        except Exception as err:
-            _LOGGER.error("Failed to send RF command: %s", err)
-            raise
+    hub: RFLinkHub
+    # Callbacks registered by the platforms to (re)synchronise their entities
+    # with the options, so that adding/removing a device does not reload the
+    # integration (which would close the serial port and reset the board).
+    platform_syncs: list[Callable[[], Awaitable[None]]] = field(default_factory=list)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up RFLink UI from a config entry."""
-    hass.data.setdefault(DOMAIN, {})
+type RFLinkConfigEntry = ConfigEntry[RFLinkRuntimeData]
 
-    data = RFLinkData(
-        writer=None,
-        reader=None,
-        recent_unknown_devices=deque(maxlen=50),
-        reconnect_task=None,
-        keep_alive_task=None,
-        is_connected=False,
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the integration-wide services."""
+
+    async def async_simulate_packet(call: ServiceCall) -> None:
+        packet = call.data[ATTR_PACKET]
+        wanted = call.data.get(ATTR_CONFIG_ENTRY_ID)
+        entries = [
+            entry
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            if entry.state is ConfigEntryState.LOADED
+            and (wanted is None or entry.entry_id == wanted)
+        ]
+        if not entries:
+            raise ServiceValidationError(
+                "No loaded RFLink gateway matches this request"
+            )
+        for entry in entries:
+            if entry.runtime_data.hub.handle_line(packet) is None:
+                raise ServiceValidationError(f"'{packet}' is not a valid RFLink packet")
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SIMULATE_PACKET,
+        async_simulate_packet,
+        schema=SIMULATE_PACKET_SCHEMA,
     )
-    hass.data[DOMAIN][entry.entry_id] = data
-
-    data.reconnect_task = hass.loop.create_task(_async_connection_loop(hass, entry))
-
-    # Clean up orphaned entities and devices (if user removed them in OptionsFlow)
-    from homeassistant.helpers import device_registry as dr, entity_registry as er
-
-    dev_reg = dr.async_get(hass)
-    ent_reg = er.async_get(hass)
-
-    active_devices = (
-        set(entry.options.get("switches", {}).keys())
-        | set(entry.options.get("sensors", {}).keys())
-        | set(entry.options.get("binary_sensors", {}).keys())
-        | set(entry.options.get("lights", {}).keys())
-        | set(entry.options.get("covers", {}).keys())
-    )
-
-    for ent in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
-        if ent.unique_id.startswith("rflink_connection_") or ent.unique_id.endswith(
-            "_rf_transmitter"
-        ):
-            continue
-        is_active = any(ent.unique_id.endswith(active) for active in active_devices)
-        if not is_active:
-            ent_reg.async_remove(ent.entity_id)
-
-    for dev in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
-        is_active = False
-        for identifier in dev.identifiers:
-            if identifier[0] == DOMAIN and (
-                identifier[1] in active_devices or identifier[1] == entry.entry_id
-            ):
-                is_active = True
-                break
-        if not is_active:
-            dev_reg.async_remove_device(dev.id)
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(update_listener))
-
-    # Register service to simulate receiving a packet
-    async def async_simulate_packet(call) -> None:
-        """Service handler to simulate receiving an RFLink packet."""
-        packet = call.data.get("packet")
-        if packet:
-            _process_packet(hass, entry.entry_id, packet)
-
-    hass.services.async_register(DOMAIN, "simulate_packet", async_simulate_packet)
-
     return True
 
 
-async def _async_connection_loop(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Maintain the serial connection and reconnect on failure."""
-    port = entry.data[CONF_PORT]
-    baudrate = 57600
+def _settings(entry: ConfigEntry) -> dict:
+    return entry.options.get(OPT_SETTINGS, {})
 
-    while True:
-        data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-        if not data:
-            break
 
-        try:
-            reader, writer = await serialx.open_serial_connection(
-                url=port, baudrate=baudrate
+async def async_setup_entry(hass: HomeAssistant, entry: RFLinkConfigEntry) -> bool:
+    """Set up RFLink UI from a config entry."""
+    entry_id = entry.entry_id
+
+    @callback
+    def _on_packet(packet: Packet) -> None:
+        for device_id in (packet.device_id, packet.alias_id):
+            if device_id:
+                async_dispatcher_send(
+                    hass, signal_update(entry_id, device_id), packet.fields
+                )
+        if packet.remote_id:
+            async_dispatcher_send(
+                hass, signal_remote(entry_id, packet.remote_id), packet.fields
             )
-            _LOGGER.info("Connected to RFLink on %s", port)
-
-            data.reader = reader
-            data.writer = writer
-            data.is_connected = True
-            async_dispatcher_send(hass, f"rflink_connection_{entry.entry_id}", True)
-
-            # Start keep-alive
-            data.keep_alive_task = hass.loop.create_task(
-                _async_keep_alive(hass, entry.entry_id)
-            )
-
-            # Read until error
-            await _async_read_serial(hass, entry.entry_id, reader)
-
-        except asyncio.CancelledError:
-            break
-        except Exception as err:
-            _LOGGER.error("RFLink connection lost on %s: %s", port, err)
-
-        # Cleanup before reconnect
-        data.is_connected = False
-        async_dispatcher_send(hass, f"rflink_connection_{entry.entry_id}", False)
-
-        if data.keep_alive_task:
-            data.keep_alive_task.cancel()
-            data.keep_alive_task = None
-
-        if data.writer:
-            try:
-                data.writer.close()
-                await data.writer.wait_closed()
-            except (ConnectionError, asyncio.TimeoutError):
-                pass
-            except Exception as e:
-                _LOGGER.debug("Error while closing writer: %s", e)
-            data.writer = None
-
-        _LOGGER.info("Attempting to reconnect to RFLink in 5 seconds...")
-        await asyncio.sleep(5)
-
-
-async def _async_keep_alive(hass: HomeAssistant, entry_id: str) -> None:
-    """Send ping every 60 seconds."""
-    while True:
-        await asyncio.sleep(60)
-        data = hass.data.get(DOMAIN, {}).get(entry_id)
-        if not data or not data.writer or not data.is_connected:
-            break
-
-        try:
-            _LOGGER.debug("Sending Keep-Alive PING to RFLink")
-            data.writer.write(b"10;PING;\n")
-            await data.writer.drain()
-        except Exception as err:
-            _LOGGER.error("Error sending RFLink PING: %s", err)
-            break
-
-
-def _process_packet(hass: HomeAssistant, entry_id: str, decoded_line: str) -> None:
-    """Process an RFLink packet line and dispatch updates."""
-    # Example RFLink message: 20;01;Kaku;ID=41;SWITCH=1;CMD=ON;
-    # Example RFLink sensor: 20;3A;Oregon TempHygro;ID=0A4C;TEMP=00ba;HUM=40;BAT=OK;
-    parts = decoded_line.split(";")
-    if len(parts) >= 4 and parts[0] == "20":
-        protocol = parts[2]
-
-        data_dict = {}
-        for part in parts[3:]:
-            if "=" in part:
-                k, v = part.split("=", 1)
-                data_dict[k] = v
-
-        device_id = data_dict.get("ID")
-        if not protocol or not device_id:
-            return
-
-        raw_device_id = None
-        if "CMD" in data_dict:
-            # RFLink uses CMD=UP/DOWN/STOP for covers such as Somfy RTS.
-            # These commands are unambiguous for a cover and should be
-            # discovered as such instead of as a switch.
-            switch = data_dict.get("SWITCH", "0")
-            full_device_id = f"{protocol}_{device_id}_{switch}"
-            cmd = data_dict.get("CMD", "").upper()
-            device_type = "cover" if cmd in {"UP", "DOWN", "STOP"} else "switch"
-        else:
-            # It's a sensor
-            device_type = "sensor"
-            raw_device_id = None
-            if protocol == "F007_TH" and device_id:
-                try:
-                    ch = (int(device_id[-1], 16) & 0x07) + 1
-                    full_device_id = f"{protocol}_CH{ch}"
-                    raw_device_id = f"{protocol}_{device_id}"
-                except (ValueError, IndexError):
-                    full_device_id = f"{protocol}_{device_id}"
-            else:
-                full_device_id = f"{protocol}_{device_id}"
-
-        _LOGGER.info(
-            "RFLink dispatcher sending to 'rflink_update_%s' with data: %s",
-            full_device_id,
-            data_dict,
+        hass.bus.async_fire(
+            EVENT_RECEIVED,
+            {
+                ATTR_CONFIG_ENTRY_ID: entry_id,
+                "device_id": packet.device_id,
+                "protocol": packet.protocol,
+                "type": packet.device_type,
+                "fields": packet.fields,
+                "packet": packet.raw,
+            },
         )
 
-        # Broadcast state change for primary device ID (channel ID for F007_TH)
-        async_dispatcher_send(hass, f"rflink_update_{full_device_id}", data_dict)
+    @callback
+    def _on_connection(connected: bool) -> None:
+        async_dispatcher_send(hass, signal_connection(entry_id), connected)
 
-        # Broadcast state change for raw device ID if available (legacy support)
-        if raw_device_id:
-            async_dispatcher_send(hass, f"rflink_update_{raw_device_id}", data_dict)
+    async def _opener(port: str, baudrate: int):
+        return await serialx.open_serial_connection(url=port, baudrate=baudrate)
 
-        # Add to recent unknown devices buffer for UI learning
-        data = hass.data[DOMAIN].get(entry_id)
-        if data:
-            buffer = data.recent_unknown_devices
-            recent_dict = dict(buffer)
+    hub = RFLinkHub(
+        entry.data[CONF_PORT],
+        opener=_opener,
+        on_packet=_on_packet,
+        on_connection=_on_connection,
+        repeats=_settings(entry).get(CONF_REPEATS, DEFAULT_REPEATS),
+        create_task=lambda coro, name: entry.async_create_background_task(
+            hass, coro, name
+        ),
+    )
+    entry.runtime_data = RFLinkRuntimeData(hub=hub)
 
-            # Remove primary device ID if it exists so it moves to the end (most recent)
-            if full_device_id in recent_dict:
-                del recent_dict[full_device_id]
-            recent_dict[full_device_id] = {"type": device_type, "data": data_dict}
+    # The gateway device must exist before devices that reference it via_device.
+    dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry_id,
+        identifiers={(DOMAIN, entry_id)},
+        name=f"RFLink ({entry.data[CONF_PORT]})",
+        manufacturer="RFLink",
+        model="Arduino RFLink",
+    )
+    async_cleanup_registries(hass, entry)
 
-            data.recent_unknown_devices = deque(recent_dict.items(), maxlen=50)
+    hub.start()
 
+    async def _stop(_: Event) -> None:
+        await hub.stop()
 
-async def _async_read_serial(
-    hass: HomeAssistant, entry_id: str, reader: asyncio.StreamReader
-) -> None:
-    """Read lines from the serial port and dispatch them."""
-    while True:
-        try:
-            line = await reader.readline()
-        except Exception as err:
-            _LOGGER.error("Error reading from RFLink: %s", err)
-            break
+    entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _stop))
 
-        if not line:
-            break
-
-        decoded_line = line.decode("utf-8", errors="ignore").strip()
-        if not decoded_line:
-            continue
-
-        _LOGGER.debug("Received RFLink data: %s", decoded_line)
-        _process_packet(hass, entry_id, decoded_line)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(update_listener))
+    return True
 
 
-async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options update."""
-    await hass.config_entries.async_reload(entry.entry_id)
+def _parse_unique_id(unique_id: str) -> tuple[str, str] | None:
+    """Return (options key, device id) for a device entity unique id."""
+    for option_key, prefix in UNIQUE_ID_PREFIXES.items():
+        if unique_id.startswith(prefix):
+            return option_key, unique_id[len(prefix) :]
+    if unique_id.startswith(SENSOR_UNIQUE_ID_PREFIX):
+        rest = unique_id[len(SENSOR_UNIQUE_ID_PREFIX) :]
+        # Longest keys first so "wind_speed" is not mistaken for another key.
+        for key in sorted((f.key for f in SENSOR_FIELDS), key=len, reverse=True):
+            if rest.startswith(f"{key}_"):
+                return OPT_SENSORS, rest[len(key) + 1 :]
+    return None
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+@callback
+def async_cleanup_registries(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove entities and devices that are no longer in the options."""
+    configured = {key: set(entry.options.get(key, {})) for key in DEVICE_OPTION_KEYS}
+    all_ids = set().union(*configured.values())
+
+    ent_reg = er.async_get(hass)
+    for ent in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        parsed = _parse_unique_id(ent.unique_id)
+        if parsed and parsed[1] not in configured[parsed[0]]:
+            ent_reg.async_remove(ent.entity_id)
+
+    dev_reg = dr.async_get(hass)
+    for dev in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+        ids = {ident for domain, ident in dev.identifiers if domain == DOMAIN}
+        if ids and not ids & (all_ids | {entry.entry_id}):
+            dev_reg.async_remove_device(dev.id)
+
+
+async def update_listener(hass: HomeAssistant, entry: RFLinkConfigEntry) -> None:
+    """Apply options changes without reconnecting to the gateway."""
+    runtime = entry.runtime_data
+    runtime.hub.repeats = max(
+        1, int(_settings(entry).get(CONF_REPEATS, DEFAULT_REPEATS))
+    )
+    for sync in runtime.platform_syncs:
+        await sync()
+    async_cleanup_registries(hass, entry)
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: RFLinkConfigEntry) -> bool:
     """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        if hass.services.has_service(DOMAIN, "simulate_packet"):
-            hass.services.async_remove(DOMAIN, "simulate_packet")
-        data = hass.data[DOMAIN].pop(entry.entry_id)
-
-        if data.reconnect_task:
-            data.reconnect_task.cancel()
-
-        if data.keep_alive_task:
-            data.keep_alive_task.cancel()
-
-        if data.writer:
-            data.writer.close()
-            try:
-                await data.writer.wait_closed()
-            except (ConnectionError, asyncio.TimeoutError):
-                pass
-            except Exception as err:
-                _LOGGER.warning("Error closing serial connection: %s", err)
-
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        await entry.runtime_data.hub.stop()
     return unload_ok

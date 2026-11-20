@@ -1,7 +1,7 @@
 import asyncio
 import datetime
 from unittest.mock import MagicMock
-from collections import deque
+from collections import OrderedDict
 
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.helpers.dispatcher import dispatcher_send
@@ -12,6 +12,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.rflink_ui import DOMAIN
+from custom_components.rflink_ui.const import signal_update
 
 
 async def test_binary_sensor_setup_and_updates(hass, mock_serial_connection):
@@ -52,27 +53,27 @@ async def test_binary_sensor_setup_and_updates(hass, mock_serial_connection):
     assert door_state.attributes.get("device_class") == "opening"
 
     # 2. Test update with "ON" for Motion Sensor
-    dispatcher_send(hass, "rflink_update_Kaku_1234_1", {"CMD": "ON"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "Kaku_1234_1"), {"CMD": "ON"})
     await hass.async_block_till_done()
 
     motion_state = hass.states.get("binary_sensor.motion_sensor")
     assert motion_state.state == STATE_ON
 
     # 3. Test update with "OFF" for Motion Sensor
-    dispatcher_send(hass, "rflink_update_Kaku_1234_1", {"CMD": "OFF"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "Kaku_1234_1"), {"CMD": "OFF"})
     await hass.async_block_till_done()
 
     motion_state = hass.states.get("binary_sensor.motion_sensor")
     assert motion_state.state == STATE_OFF
 
     # 4. Test other universal commands (OPEN / CLOSE)
-    dispatcher_send(hass, "rflink_update_NewKaku_abc_2", {"CMD": "OPEN"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "NewKaku_abc_2"), {"CMD": "OPEN"})
     await hass.async_block_till_done()
 
     door_state = hass.states.get("binary_sensor.door_sensor")
     assert door_state.state == STATE_ON
 
-    dispatcher_send(hass, "rflink_update_NewKaku_abc_2", {"CMD": "CLOSE"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "NewKaku_abc_2"), {"CMD": "CLOSE"})
     await hass.async_block_till_done()
 
     door_state = hass.states.get("binary_sensor.door_sensor")
@@ -109,7 +110,7 @@ async def test_binary_sensor_off_delay(hass, mock_serial_connection):
     assert state.state == STATE_OFF
 
     # Trigger motion
-    dispatcher_send(hass, "rflink_update_Kaku_motion", {"CMD": "MOTION"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "Kaku_motion"), {"CMD": "MOTION"})
     await hass.async_block_till_done()
 
     state = hass.states.get("binary_sensor.pir_sensor")
@@ -182,14 +183,13 @@ async def test_options_flow_binary_sensors(hass, mock_serial_connection):
     }
 
     # 2. Add binary sensor learned
-    mock_data = MagicMock()
+    entry.runtime_data = MagicMock()
     # CMD indicates switch type -> can be switch or binary sensor
-    mock_data.recent_unknown_devices = deque(
+    entry.runtime_data.hub.recent_devices = OrderedDict(
         [
             ("Kaku_learned_bin", {"type": "switch", "data": {"CMD": "ON"}}),
         ]
     )
-    hass.data[DOMAIN] = {entry.entry_id: mock_data}
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(

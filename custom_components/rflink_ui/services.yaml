@@ -31,4 +31,10 @@ simulate_packet:
       example: 20;01;Kaku;ID=1234abcd;SWITCH=1;CMD=ON;
       selector:
         text:
-
+    config_entry_id:
+      name: Gateway
+      description: Gateway that receives the simulated packet (all gateways if empty).
+      required: false
+      selector:
+        config_entry:
+          integration: rflink_ui

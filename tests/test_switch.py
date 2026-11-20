@@ -4,6 +4,7 @@ from homeassistant.const import STATE_OFF, STATE_ON
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rflink_ui import DOMAIN
+from custom_components.rflink_ui.const import signal_update
 
 
 async def test_switch_setup_and_control(hass, mock_serial_connection):
@@ -34,7 +35,7 @@ async def test_switch_setup_and_control(hass, mock_serial_connection):
     from homeassistant.helpers.dispatcher import dispatcher_send
     dispatcher_send(
         hass,
-        "rflink_update_Unitec_1a4a_4",
+        signal_update(entry.entry_id, "Unitec_1a4a_4"),
         {"CMD": "ON"}
     )
     await hass.async_block_till_done()
@@ -45,7 +46,7 @@ async def test_switch_setup_and_control(hass, mock_serial_connection):
     # Simulate dispatcher update (Turn OFF)
     dispatcher_send(
         hass,
-        "rflink_update_Unitec_1a4a_4",
+        signal_update(entry.entry_id, "Unitec_1a4a_4"),
         {"CMD": "OFF"}
     )
     await hass.async_block_till_done()

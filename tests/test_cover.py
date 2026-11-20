@@ -3,11 +3,15 @@
 import asyncio
 from unittest.mock import patch
 
+import pytest
 from homeassistant.core import State
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import dispatcher_send
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.rflink_ui import DOMAIN
+from custom_components.rflink_ui.hub import RFLinkCommandError
+from custom_components.rflink_ui.const import signal_update
 
 
 async def test_cover_setup_and_control(hass, mock_serial_connection):
@@ -80,28 +84,28 @@ async def test_cover_setup_and_control(hass, mock_serial_connection):
 
     # 5. Dispatcher updates
     # Dispatcher UP
-    dispatcher_send(hass, "rflink_update_RTS_0a1b2c_0", {"CMD": "UP"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "RTS_0a1b2c_0"), {"CMD": "UP"})
     await hass.async_block_till_done()
     state = hass.states.get("cover.living_room_blinds")
     assert state.state == "opening"
     assert state.attributes.get("movement_state") == "opening"
 
     # Dispatcher STOP
-    dispatcher_send(hass, "rflink_update_RTS_0a1b2c_0", {"CMD": "STOP"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "RTS_0a1b2c_0"), {"CMD": "STOP"})
     await hass.async_block_till_done()
     state = hass.states.get("cover.living_room_blinds")
     assert state.state == "unknown"
     assert state.attributes.get("movement_state") == "stopped"
 
     # Dispatcher DOWN
-    dispatcher_send(hass, "rflink_update_RTS_0a1b2c_0", {"CMD": "DOWN"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "RTS_0a1b2c_0"), {"CMD": "DOWN"})
     await hass.async_block_till_done()
     state = hass.states.get("cover.living_room_blinds")
     assert state.state == "closing"
     assert state.attributes.get("movement_state") == "closing"
 
     # Dispatcher unknown command (should be ignored)
-    dispatcher_send(hass, "rflink_update_RTS_0a1b2c_0", {"CMD": "UNKNOWN"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "RTS_0a1b2c_0"), {"CMD": "UNKNOWN"})
     await hass.async_block_till_done()
     state = hass.states.get("cover.living_room_blinds")
     assert state.state == "closing"
@@ -152,13 +156,13 @@ async def test_cover_inverted(hass, mock_serial_connection):
     assert b"10;RTS;0a1b2c;1;UP;\n" in writer.written
 
     # Inverted dispatcher UP -> direction is inverted, so it's closing
-    dispatcher_send(hass, "rflink_update_RTS_0a1b2c_1", {"CMD": "UP"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "RTS_0a1b2c_1"), {"CMD": "UP"})
     await hass.async_block_till_done()
     state = hass.states.get("cover.inverted_blinds")
     assert state.state == "closing"
 
     # Inverted dispatcher DOWN -> direction is inverted, so it's opening
-    dispatcher_send(hass, "rflink_update_RTS_0a1b2c_1", {"CMD": "DOWN"})
+    dispatcher_send(hass, signal_update(entry.entry_id, "RTS_0a1b2c_1"), {"CMD": "DOWN"})
     await hass.async_block_till_done()
     state = hass.states.get("cover.inverted_blinds")
     assert state.state == "opening"
@@ -181,19 +185,9 @@ async def test_cover_string_config_and_short_id(hass, mock_serial_connection):
     await hass.async_block_till_done()
     await asyncio.sleep(0.01)
 
-    state = hass.states.get("cover.simple_cover")
-    assert state is not None
-    assert state.attributes.get("friendly_name") == "Simple Cover"
-
-    # Stop command sends default 'Unknown' and '0' protocol values
-    await hass.services.async_call(
-        "cover",
-        "stop_cover",
-        {"entity_id": "cover.simple_cover"},
-        blocking=True,
-    )
-    writer = mock_serial_connection["writer"]
-    assert b"10;Unknown;0;0;STOP;\n" in writer.written
+    # "ShortId" is not a protocol_id_switch identifier: the device is ignored
+    # instead of sending frames with a made-up protocol.
+    assert hass.states.get("cover.simple_cover") is None
 
 
 async def test_cover_restore_state(hass, mock_serial_connection):
@@ -244,14 +238,15 @@ async def test_cover_send_error_handled(hass, mock_serial_connection):
     await hass.async_block_till_done()
     await asyncio.sleep(0.01)
 
-    data = hass.data[DOMAIN][entry.entry_id]
+    hub = entry.runtime_data.hub
     with patch.object(
-        data, "async_send_command", side_effect=Exception("Serial write failed")
-    ):
-        # Should not raise exception
+        hub, "async_send_command", side_effect=RFLinkCommandError("Serial write failed")
+    ), pytest.raises(HomeAssistantError, match="Serial write failed"):
         await hass.services.async_call(
             "cover",
             "open_cover",
             {"entity_id": "cover.error_cover"},
             blocking=True,
         )
+    # The state is not changed when the command could not be delivered
+    assert hass.states.get("cover.error_cover").state != "opening"

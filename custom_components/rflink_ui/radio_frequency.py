@@ -1,11 +1,11 @@
 import logging
-import voluptuous as vol
 from typing import Any
 
-from homeassistant.helpers import entity_platform
 import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_platform
 from homeassistant.util import dt as dt_util
-
 
 try:
     from homeassistant.components.radio_frequency import (
@@ -23,7 +23,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import DOMAIN
+from .const import DOMAIN
+from .hub import RFLinkCommandError
+from .protocol import build_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,9 +36,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the RFLink radio_frequency platform."""
-    data = hass.data[DOMAIN][entry.entry_id]
+    hub = entry.runtime_data.hub
 
-    async_add_entities([RFLinkTransmitterDevice(data, entry.entry_id, entry.title)])
+    async_add_entities([RFLinkTransmitterDevice(hub, entry.entry_id, entry.title)])
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
@@ -90,14 +92,13 @@ class RFLinkTransmitterDevice(RadioFrequencyEntity):
 
         async def async_send_command(self, command: Any) -> None:
             """Send an RF command."""
-            pass
 
     async def async_send_rf_command(
         self, protocol: str, command: str, **kwargs: Any
     ) -> None:
         """Send an RF command via RFLink."""
         # RFLink serial syntax: "10;{protocol};{command};\n"
-        rflink_command = f"10;{protocol};{command};\n"
+        rflink_command = build_command(protocol.strip(), command.strip().strip(";"))
 
         try:
             await self._data.async_send_command(rflink_command)
@@ -108,6 +109,5 @@ class RFLinkTransmitterDevice(RadioFrequencyEntity):
             else:
                 self._attr_state = "ready"
             self.async_write_ha_state()
-        except Exception as err:
-            _LOGGER.error("Failed to send RF command: %s", err)
-            raise
+        except RFLinkCommandError as err:
+            raise HomeAssistantError(str(err)) from err

@@ -18,6 +18,9 @@
     },
     "error": {
       "cannot_connect": "Impossible de se connecter au port série."
+    },
+    "abort": {
+      "already_configured": "Ce port est déjà configuré."
     }
   },
   "options": {
@@ -28,7 +31,8 @@
           "add_learned": "Ajouter un appareil détecté",
           "add_manual": "Ajouter un appareil manuellement",
           "modify": "Modifier l'ID d'un appareil",
-          "remove": "Supprimer un appareil"
+          "remove": "Supprimer un appareil",
+          "settings": "Réglages de la passerelle"
         }
       },
       "add_learned": {
@@ -85,12 +89,128 @@
         "data": {
           "inverted": "Inverser le sens ouverture/fermeture"
         }
+      },
+      "settings": {
+        "title": "Réglages de la passerelle",
+        "description": "Chaque commande RF est envoyée ce nombre de fois (la passerelle accuse réception de chacune). Augmentez la valeur si certains récepteurs ratent des commandes.",
+        "data": {
+          "repeats": "Répétitions du signal"
+        }
+      },
+      "select_sensor_type": {
+        "title": "Type d'appareil",
+        "description": "Cet appareil envoie des déclenchements (mouvement, fumée, sonnette). Choisissez comment Home Assistant doit le représenter.",
+        "data": {
+          "device_type": "Type d'appareil"
+        }
+      },
+      "event_options": {
+        "title": "Options de l'événement",
+        "description": "Déclencher des événements pour le bouton {button} seulement, ou pour tous les boutons de la télécommande {remote} ? Pour toute la télécommande, le bouton appuyé figure dans l'attribut `button` de l'événement.",
+        "data": {
+          "whole_remote": "Écouter tous les boutons de cette télécommande"
+        }
       }
     },
     "error": {
       "no_devices_found": "Aucun signal RFLink inconnu récent n'a été détecté. Appuyez sur votre télécommande et réessayez.",
-      "no_configured_devices": "Aucun appareil n'est configuré.",
-      "cannot_connect": "Impossible de se connecter au port série"
+      "cannot_connect": "Impossible de se connecter au port série",
+      "invalid_device_id": "ID RFLink invalide. Format attendu : protocole_id_switch (ex. Kaku_41_1), ou protocole_id pour les capteurs et événements.",
+      "already_configured": "Cet ID RFLink est déjà configuré."
+    },
+    "abort": {
+      "already_configured": "Cet appareil est déjà configuré.",
+      "no_configured_devices": "Aucun appareil configuré."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "Température"
+      },
+      "humidity": {
+        "name": "Humidité"
+      },
+      "humidity_status": {
+        "name": "État de l'humidité",
+        "state": {
+          "normal": "Normal",
+          "comfortable": "Confortable",
+          "dry": "Sec",
+          "wet": "Humide"
+        }
+      },
+      "pressure": {
+        "name": "Pression"
+      },
+      "forecast": {
+        "name": "Prévision",
+        "state": {
+          "no_info": "Pas d'information",
+          "sunny": "Ensoleillé",
+          "partly_cloudy": "Partiellement nuageux",
+          "cloudy": "Nuageux",
+          "rain": "Pluie"
+        }
+      },
+      "uv": {
+        "name": "Indice UV"
+      },
+      "illuminance": {
+        "name": "Luminosité"
+      },
+      "total_rain": {
+        "name": "Pluie totale"
+      },
+      "rain_rate": {
+        "name": "Intensité de pluie"
+      },
+      "wind_speed": {
+        "name": "Vitesse du vent"
+      },
+      "wind_average": {
+        "name": "Vitesse moyenne du vent"
+      },
+      "wind_gust": {
+        "name": "Rafale"
+      },
+      "wind_direction": {
+        "name": "Direction du vent"
+      },
+      "wind_chill": {
+        "name": "Température ressentie"
+      },
+      "wind_temperature": {
+        "name": "Température du vent"
+      },
+      "power": {
+        "name": "Puissance"
+      },
+      "battery": {
+        "name": "Batterie"
+      }
+    },
+    "event": {
+      "remote": {
+        "state_attributes": {
+          "event_type": {
+            "name": "Type d'événement",
+            "state": {
+              "on": "On",
+              "off": "Off",
+              "all_on": "Tout on",
+              "all_off": "Tout off",
+              "up": "Monter",
+              "down": "Descendre",
+              "stop": "Stop",
+              "pair": "Appairage",
+              "dim": "Variation",
+              "ring": "Sonnerie",
+              "other": "Autre"
+            }
+          }
+        }
+      }
     }
   }
 }

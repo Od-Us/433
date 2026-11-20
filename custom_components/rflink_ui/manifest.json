@@ -2,17 +2,18 @@
   "domain": "rflink_ui",
   "name": "RFLink UI",
   "codeowners": [
-    "@guanaco0403"
+    "@Od-Us"
   ],
   "config_flow": true,
   "after_dependencies": [
     "radio_frequency",
     "usb"
   ],
-  "documentation": "https://github.com/guanaco0403/Home-Assistant-Rflink-UI",
+  "documentation": "https://github.com/Od-Us/433",
   "iot_class": "local_push",
+  "issue_tracker": "https://github.com/Od-Us/433/issues",
   "requirements": [
     "serialx>=1.10.0"
   ],
-  "version": "1.2.3"
+  "version": "1.3.0"
 }
