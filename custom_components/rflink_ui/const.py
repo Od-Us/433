@@ -1,6 +1,8 @@
 """Constants for the RFLink UI integration."""
 
 DOMAIN = "rflink_ui"
+# Displayed name (the technical domain stays rflink_ui).
+DEFAULT_TITLE = "RF433Link"
 
 # Options keys holding the configured devices, and the platform of each.
 OPT_SWITCHES = "switches"

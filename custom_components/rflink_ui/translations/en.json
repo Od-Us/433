@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "RFLink",
+        "title": "RF433Link",
         "description": "Select the serial port of your RFLink gateway.",
         "data": {
           "port": "Port"
@@ -26,7 +26,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Manage RFLink Devices",
+        "title": "RF433Link",
         "menu_options": {
           "add_learned": "Add recently detected device (Learning mode)",
           "add_manual": "Add device manually",

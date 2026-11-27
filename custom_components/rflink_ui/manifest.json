@@ -1,6 +1,6 @@
 {
   "domain": "rflink_ui",
-  "name": "RFLink UI",
+  "name": "RF433Link",
   "codeowners": [
     "@Od-Us"
   ],
@@ -15,5 +15,5 @@
   "requirements": [
     "serialx>=1.10.0"
   ],
-  "version": "1.5.0"
+  "version": "1.6.0"
 }

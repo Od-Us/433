@@ -1,6 +1,8 @@
-# 🏠 Home Assistant RFLink UI
+# 🏠 RF433Link for Home Assistant
 
-> Fork of [guanaco0403/Home-Assistant-Rflink-UI](https://github.com/guanaco0403/Home-Assistant-Rflink-UI) with a more reliable gateway link, event entities and on-demand sensors.
+<img src="custom_components/rflink_ui/brand/icon.png" width="128" alt="RF433Link">
+
+> RF433Link (technical name `rflink_ui`) is a fork of [guanaco0403/Home-Assistant-Rflink-UI](https://github.com/guanaco0403/Home-Assistant-Rflink-UI) with a more reliable gateway link, event entities and on-demand sensors.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
@@ -68,7 +70,7 @@ This integration uses the `serialx` library for robust, non-blocking asynchronou
 2. Add this repo URL: `https://github.com/Od-Us/433`
 3. Select category: **Integration**
 4. Click **Add**
-5. Install the `RFLink UI` integration
+5. Install the `RF433Link` integration
 6. Restart Home Assistant
 
 ### Option 2: Manual
@@ -84,7 +86,7 @@ This integration uses the `serialx` library for robust, non-blocking asynchronou
 ### Setup via Home Assistant UI
 
 1. Go to **Settings > Devices & Services > Add Integration**
-2. Search for **RFLink UI**
+2. Search for **RF433Link**
 3. Select your serial port from the dropdown (e.g., `/dev/ttyUSB0` or `COM3`) — it's recommended to use the `/dev/serial/by-id/...` path if available so device path changes after reboot don't disconnect your gateway.
 4. **Network / ser2net setup**: If connecting to a remote RFLink via `ser2net` or network socket, choose **Enter manually** and use the `socket://` scheme:
    * **TCP Socket**: `socket://<IP_OR_HOSTNAME>:<PORT>` (e.g., `socket://192.168.1.50:2001`)

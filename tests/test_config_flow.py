@@ -21,7 +21,7 @@ async def test_config_flow_success(hass, mock_serial_connection):
         {"port": "COM1"},
     )
     assert result["type"] == "create_entry"
-    assert result["title"] == "RFLink (COM1)"
+    assert result["title"] == "RF433Link (COM1)"
     assert result["data"] == {"port": "COM1"}
 
 
@@ -330,7 +330,7 @@ async def test_config_flow_with_by_id_ports(hass, mock_serial_connection):
         assert result["type"] == "create_entry"
         assert (
             result["title"]
-            == "RFLink (/dev/serial/by-id/usb-RFLink_gateway_1234-if00-port0)"
+            == "RF433Link (/dev/serial/by-id/usb-RFLink_gateway_1234-if00-port0)"
         )
         assert result["data"] == {
             "port": "/dev/serial/by-id/usb-RFLink_gateway_1234-if00-port0"
@@ -360,7 +360,7 @@ async def test_config_flow_manual_port(hass, mock_serial_connection):
         {"port": "/dev/custom_port_path"},
     )
     assert result["type"] == "create_entry"
-    assert result["title"] == "RFLink (/dev/custom_port_path)"
+    assert result["title"] == "RF433Link (/dev/custom_port_path)"
     assert result["data"] == {"port": "/dev/custom_port_path"}
 
 

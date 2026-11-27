@@ -25,6 +25,7 @@ from .binary_sensor import _detect_device_class
 from .const import (
     CONF_REPEATS,
     DEFAULT_REPEATS,
+    DEFAULT_TITLE,
     DEVICE_OPTION_KEYS,
     DOMAIN,
     OPT_BINARY_SENSORS,
@@ -112,7 +113,9 @@ class RFLinkTransmitterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.hass.async_add_executor_job(self._test_serial_port, port)
         except Exception:  # noqa: BLE001
             return None
-        return self.async_create_entry(title=f"RFLink ({port})", data={CONF_PORT: port})
+        return self.async_create_entry(
+            title=f"{DEFAULT_TITLE} ({port})", data={CONF_PORT: port}
+        )
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None

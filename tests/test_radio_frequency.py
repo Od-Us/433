@@ -22,7 +22,7 @@ async def test_radio_frequency_transmitter(hass, mock_serial_connection):
     # 1. Verify transmitter entity was created
     # The domain is radio_frequency (or fallback depending on HA version)
     # Let's look up the entity in the state registry
-    state = hass.states.get("radio_frequency.rflink_com1_transmitter")
+    state = hass.states.get("radio_frequency.rf433link_com1_transmitter")
     # If the domain is not radio_frequency, check if it falls back to a different domain
     if state is None:
          # Depending on pre-2026.5 version fallback, it might register as entity under DOMAIN/platform domain

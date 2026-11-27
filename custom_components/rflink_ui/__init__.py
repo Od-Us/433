@@ -21,6 +21,7 @@ from homeassistant.helpers.typing import ConfigType
 from .const import (
     CONF_REPEATS,
     DEFAULT_REPEATS,
+    DEFAULT_TITLE,
     DEVICE_OPTION_KEYS,
     DOMAIN,
     EVENT_RECEIVED,
@@ -117,6 +118,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: RFLinkConfigEntry) -> bo
     """Set up RFLink UI from a config entry."""
     entry_id = entry.entry_id
 
+    # Rename entries created with the former default title (custom titles kept).
+    if entry.title == f"RFLink ({entry.data[CONF_PORT]})":
+        hass.config_entries.async_update_entry(
+            entry, title=f"{DEFAULT_TITLE} ({entry.data[CONF_PORT]})"
+        )
+
     @callback
     def _on_packet(packet: Packet) -> None:
         for device_id in (packet.device_id, packet.alias_id):
@@ -163,7 +170,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: RFLinkConfigEntry) -> bo
     dr.async_get(hass).async_get_or_create(
         config_entry_id=entry_id,
         identifiers={(DOMAIN, entry_id)},
-        name=f"RFLink ({entry.data[CONF_PORT]})",
+        name=f"{DEFAULT_TITLE} ({entry.data[CONF_PORT]})",
         manufacturer="RFLink",
         model="Arduino RFLink",
     )
