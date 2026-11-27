@@ -99,11 +99,17 @@ class RFLinkBinarySensor(RFLinkEntity, BinarySensorEntity, RestoreEntity):
         protocol = (
             device_id.rsplit("_", 2)[0] if device_id.count("_") >= 2 else "Unknown"
         )
-        super().__init__(entry, device_id, name, protocol)
-        self._attr_unique_id = f"{UNIQUE_ID_PREFIXES[OPT_BINARY_SENSORS]}{device_id}"
+        super().__init__(entry, device_id, name, protocol, config)
+        self._attr_unique_id = self._unique_id_for(device_id)
         self._attr_is_on = False
         self._delay_listener: CALLBACK_TYPE | None = None
+        self._apply_settings(config)
 
+    def _unique_id_for(self, device_id: str) -> str | None:
+        return f"{UNIQUE_ID_PREFIXES[OPT_BINARY_SENSORS]}{device_id}"
+
+    def _apply_settings(self, config: Any) -> bool:
+        name = device_config_name(config, self._device_id)
         if isinstance(config, dict):
             self._off_delay = config.get("off_delay")
             device_class = config.get("device_class")
@@ -114,7 +120,8 @@ class RFLinkBinarySensor(RFLinkEntity, BinarySensorEntity, RestoreEntity):
             )
         else:
             self._off_delay = None
-            self._attr_device_class = _detect_device_class(device_id, name)
+            self._attr_device_class = _detect_device_class(self._device_id, name)
+        return True
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

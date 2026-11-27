@@ -62,6 +62,14 @@ def event_from_fields(data: dict[str, str]) -> tuple[str, dict[str, Any]] | None
     return None
 
 
+def _is_whole_remote(device_id: str) -> bool:
+    try:
+        split_device_id(device_id)
+    except ValueError:
+        return True
+    return False
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: RFLinkConfigEntry,
@@ -71,7 +79,11 @@ async def async_setup_entry(
 
     def factory(device_id: str, config: Any) -> DeviceHandle:
         return DeviceHandle(
-            [RFLinkEvent(entry, device_id, device_config_name(config, device_id))]
+            [
+                RFLinkEvent(
+                    entry, device_id, device_config_name(config, device_id), config
+                )
+            ]
         )
 
     await async_setup_dynamic_platform(
@@ -87,22 +99,35 @@ class RFLinkEvent(RFLinkEntity, EventEntity):
     _attr_event_types = EVENT_TYPES
     _attr_device_class = EventDeviceClass.BUTTON
 
-    def __init__(self, entry: RFLinkConfigEntry, device_id: str, name: str) -> None:
-        try:
-            protocol = split_device_id(device_id)[0]
-            self._whole_remote = False
-        except ValueError:
-            protocol = split_remote_id(device_id)[0]
-            self._whole_remote = True
-        super().__init__(entry, device_id, name, protocol)
-        self._attr_unique_id = f"{UNIQUE_ID_PREFIXES[OPT_EVENTS]}{device_id}"
+    def __init__(
+        self, entry: RFLinkConfigEntry, device_id: str, name: str, config: Any = None
+    ) -> None:
+        self._whole_remote = _is_whole_remote(device_id)
+        protocol = (
+            split_remote_id(device_id)[0]
+            if self._whole_remote
+            else split_device_id(device_id)[0]
+        )
+        super().__init__(entry, device_id, name, protocol, config)
+        self._attr_unique_id = self._unique_id_for(device_id)
 
-    async def async_added_to_hass(self) -> None:
-        # The base class subscribes to packets addressed to device_id (one
-        # button, or sensor-style packets such as doorbell CHIME frames).
-        await super().async_added_to_hass()
+    def _unique_id_for(self, device_id: str) -> str | None:
+        return f"{UNIQUE_ID_PREFIXES[OPT_EVENTS]}{device_id}"
+
+    def _set_device_id(self, device_id: str) -> bool:
+        # Switching between one button and a whole remote re-creates the entity.
+        if _is_whole_remote(device_id) != self._whole_remote:
+            return False
+        return super()._set_device_id(device_id)
+
+    def _signals(self) -> list[str]:
+        # Packets addressed to the id itself (one button, or sensor-style
+        # packets such as doorbell CHIME frames), plus every button of each
+        # remote for a whole remote.
+        signals = super()._signals()
         if self._whole_remote:
-            self._subscribe(signal_remote(self._entry_id, self._device_id))
+            signals += [signal_remote(self._entry_id, i) for i in self._all_ids]
+        return signals
 
     @callback
     def _handle_rflink_update(self, data: dict[str, str]) -> None:

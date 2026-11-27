@@ -281,6 +281,7 @@ class RFLinkHub:
             self.recent_devices.pop(packet.device_id, None)
             self.recent_devices[packet.device_id] = {
                 "type": packet.device_type,
+                "protocol": packet.protocol,
                 "data": packet.fields,
                 "last_seen": self.last_received,
             }

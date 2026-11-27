@@ -44,6 +44,7 @@ from .const import (
     device_config_name,
     signal_update,
 )
+from .devices import device_aliases
 from .entity import DeviceHandle, RFLinkEntity, async_setup_dynamic_platform
 from .protocol import FORECAST, HUMIDITY_STATUS, SENSOR_FIELDS, decode_sensor_values
 
@@ -166,11 +167,13 @@ async def async_setup_entry(
             device_id,
             device_config_name(config, device_id),
             async_add_entities,
+            device_aliases(config),
         )
-        handle = DeviceHandle(manager.entities_list)
+        handle = DeviceHandle(manager.entities_list, apply=manager.apply_config)
         for key in existing_keys(device_id):
             manager.create(key)
-        handle.unsubs.append(manager.start())
+        manager.start()
+        handle.unsubs.append(manager.stop)
         return handle
 
     await async_setup_dynamic_platform(
@@ -189,6 +192,7 @@ class SensorDeviceManager:
         device_id: str,
         name: str,
         async_add_entities: AddEntitiesCallback,
+        aliases: list[str] | None = None,
     ) -> None:
         self.hass = hass
         self.entry = entry
@@ -200,7 +204,8 @@ class SensorDeviceManager:
         # Shared with the DeviceHandle so that entities created later are
         # removed together with the device.
         self.entities_list: list[RFLinkSensor] = []
-        self._started = False
+        self.aliases: list[str] = list(aliases or [])
+        self._unsubs: list[Any] = []
 
     def create(
         self, key: str, value: Any = None, attrs: dict | None = None
@@ -212,17 +217,43 @@ class SensorDeviceManager:
         self.entities_list.append(entity)
         return entity
 
-    def start(self):
-        self._started = True
-        return async_dispatcher_connect(
-            self.hass, signal_update(self.entry.entry_id, self.device_id), self._handle
-        )
+    @callback
+    def start(self) -> None:
+        """Listen to the packets of the primary id and of every alias."""
+        self.stop()
+        for device_id in dict.fromkeys([self.device_id, *self.aliases]):
+            self._unsubs.append(
+                async_dispatcher_connect(
+                    self.hass,
+                    signal_update(self.entry.entry_id, device_id),
+                    self._handle,
+                )
+            )
+
+    @callback
+    def stop(self) -> None:
+        while self._unsubs:
+            self._unsubs.pop()()
+
+    @callback
+    def apply_config(self, device_id: str, config: Any) -> bool:
+        """Change the id / additional ids without re-creating the entities."""
+        if device_id != self.device_id:
+            for entity in self.entities_list:
+                entity.move_to(device_id)
+            self.device_id = device_id
+        self.aliases = device_aliases(config)
+        self.start()
+        return True
 
     @callback
     def _handle(self, data: dict[str, str]) -> None:
         values, extra = decode_sensor_values(data)
         _LOGGER.debug("Sensor %s received %s", self.device_id, values)
         attrs = dict(extra)
+        if "ID" in data:
+            # Which RF id sent the last values (useful with additional ids).
+            attrs["rflink_id"] = data["ID"]
         if "battery" in values:
             attrs["battery"] = values["battery"]
         new: list[RFLinkSensor] = []
@@ -292,6 +323,12 @@ class RFLinkSensor(RFLinkEntity, RestoreSensor):
                     "options",
                 )
             }
+
+    @callback
+    def move_to(self, device_id: str) -> None:
+        """Follow a change of the device primary id (registry already updated)."""
+        self._device_id = device_id
+        self._attr_unique_id = sensor_unique_id(self.key, device_id)
 
     def set_value(self, value: Any, attrs: dict[str, Any]) -> None:
         self._attr_native_value = value

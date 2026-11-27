@@ -12,9 +12,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import RFLinkConfigEntry
-from .const import OPT_SWITCHES, UNIQUE_ID_PREFIXES, device_config_name
-from .entity import DeviceHandle, RFLinkEntity, async_setup_dynamic_platform
-from .protocol import split_device_id
+from .const import OPT_SWITCHES, device_config_name
+from .entity import DeviceHandle, RFLinkCommandEntity, async_setup_dynamic_platform
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,7 +27,11 @@ async def async_setup_entry(
 
     def factory(device_id: str, config: Any) -> DeviceHandle:
         return DeviceHandle(
-            [RFLinkSwitch(entry, device_id, device_config_name(config, device_id))]
+            [
+                RFLinkSwitch(
+                    entry, device_id, device_config_name(config, device_id), config
+                )
+            ]
         )
 
     await async_setup_dynamic_platform(
@@ -36,18 +39,17 @@ async def async_setup_entry(
     )
 
 
-class RFLinkSwitch(RFLinkEntity, SwitchEntity, RestoreEntity):
+class RFLinkSwitch(RFLinkCommandEntity, SwitchEntity, RestoreEntity):
     """Representation of an RFLink switch."""
 
     _attr_name = None
     _attr_force_update = True
+    _option_key = OPT_SWITCHES
 
-    def __init__(self, entry: RFLinkConfigEntry, device_id: str, name: str) -> None:
-        self._protocol, self._rflink_id, self._rflink_switch = split_device_id(
-            device_id
-        )
-        super().__init__(entry, device_id, name, self._protocol)
-        self._attr_unique_id = f"{UNIQUE_ID_PREFIXES[OPT_SWITCHES]}{device_id}"
+    def __init__(
+        self, entry: RFLinkConfigEntry, device_id: str, name: str, config: Any = None
+    ) -> None:
+        super().__init__(entry, device_id, name, config)
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:

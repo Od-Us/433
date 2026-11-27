@@ -99,6 +99,16 @@ Once configured, click **Configure** on the integration card to:
 - **Modify device ID**: Rename or remap an existing device's RFLink ID.
 - **Remove device**: Delete an existing device from the integration.
 - **Gateway settings**: Number of times each RF command is sent (1–10).
+- **Edit a device**: change the name, the **additional IDs** and the type settings (cover direction, light type, binary sensor class and off delay). Changes are applied to the live entities, without removing them: their state never goes through `unavailable`, so automations are not triggered.
+
+### Additional IDs
+
+A device can answer to several RFLink IDs: packets received on any of them update the same entities (a temperature probe whose ID changes when the batteries are replaced, a second remote for the same light...). Commands are always sent with the primary ID.
+
+- In **Edit a device**, compatible IDs received recently are proposed **with their last values** (e.g. `Oregon TempHygro_0B12 — 21.4°C · 48% · bat. OK (12 s)`), so you can tell several probes apart. Any other ID can be typed in.
+- In the **learning mode**, an unknown ID using the same protocol as a configured device can be added as an additional ID of that device; the last values of both are shown side by side.
+- **Change the primary ID** keeps the entities, their history and automations (an additional ID can be promoted to primary).
+- Sensors expose the `rflink_id` attribute: the RF ID that sent the last values.
 
 Devices that send trigger-style data (`PIR=`, `SMOKEALERT=`, `CHIME=`) can be added from the learning mode as a binary sensor or an event.
 

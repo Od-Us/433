@@ -72,6 +72,9 @@ class RFLinkRuntimeData:
     # with the options, so that adding/removing a device does not reload the
     # integration (which would close the serial port and reset the board).
     platform_syncs: list[Callable[[], Awaitable[None]]] = field(default_factory=list)
+    # new id -> old id, set by the options flow when a device id is changed so
+    # that the platforms move the live entities instead of re-creating them.
+    pending_renames: dict[str, str] = field(default_factory=dict)
 
 
 type RFLinkConfigEntry = ConfigEntry[RFLinkRuntimeData]
@@ -219,6 +222,7 @@ async def update_listener(hass: HomeAssistant, entry: RFLinkConfigEntry) -> None
     )
     for sync in runtime.platform_syncs:
         await sync()
+    runtime.pending_renames.clear()
     async_cleanup_registries(hass, entry)
 
 

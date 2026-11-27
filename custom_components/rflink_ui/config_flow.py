@@ -14,7 +14,14 @@ from homeassistant.const import CONF_PORT
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
+from .binary_sensor import _detect_device_class
 from .const import (
     CONF_REPEATS,
     DEFAULT_REPEATS,
@@ -30,6 +37,16 @@ from .const import (
     SENSOR_UNIQUE_ID_PREFIX,
     UNIQUE_ID_PREFIXES,
     device_config_name,
+)
+from .devices import (
+    CONF_ALIASES,
+    alias_candidates,
+    device_aliases,
+    devices_for_learned,
+    id_index,
+    preview,
+    recent_info_for,
+    with_aliases,
 )
 from .protocol import SENSOR_FIELDS, TYPE_COVER, TYPE_SENSOR, TYPE_SWITCH
 
@@ -148,6 +165,7 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         self.options: dict[str, Any] = {}
         self._temp_device_id: str | None = None
         self._temp_name: str | None = None
+        self._edit_key: str = OPT_SWITCHES
 
     def _load_options(self) -> None:
         if self.options:
@@ -161,7 +179,23 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         return getattr(runtime, "hub", None)
 
     def _configured(self, device_id: str) -> bool:
-        return any(device_id in self.options[key] for key in DEVICE_OPTION_KEYS)
+        """True if the id is used by a device, as primary or additional id."""
+        return device_id in id_index(self.options)
+
+    def _recent(self) -> dict[str, dict[str, Any]]:
+        hub = self._hub()
+        return dict(hub.recent_devices) if hub else {}
+
+    def _fr(self) -> bool:
+        return str(self.hass.config.language or "").lower().startswith("fr")
+
+    def _txt(self, en: str, fr: str) -> str:
+        """Text for labels built at runtime (not covered by translations)."""
+        return fr if self._fr() else en
+
+    def _preview_of(self, device_id: str) -> str:
+        text = preview(recent_info_for(self._recent(), device_id))
+        return text or self._txt("not received recently", "pas reçu récemment")
 
     def _save(self) -> config_entries.ConfigFlowResult:
         return self.async_create_entry(title="", data=self.options)
@@ -174,7 +208,14 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         self._load_options()
         return self.async_show_menu(
             step_id="init",
-            menu_options=["add_learned", "add_manual", "modify", "remove", "settings"],
+            menu_options=[
+                "add_learned",
+                "add_manual",
+                "edit",
+                "modify",
+                "remove",
+                "settings",
+            ],
         )
 
     async def async_step_settings(
@@ -212,37 +253,31 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             if selection == "clear":
                 if hub:
                     hub.recent_devices.clear()
-            elif selection != "refresh":
+            elif selection != "refresh" and selection in recent:
                 name = (user_input.get("name") or "").strip()
+                self._temp_device_id = selection
+                self._temp_name = name
+                info = recent[selection]
+                if devices_for_learned(
+                    self.options, selection, info.get("type"), info.get("protocol")
+                ):
+                    # Same protocol as a configured device: may be a new id of
+                    # it (battery change, replaced remote...).
+                    return await self.async_step_learned_target()
                 if not name:
                     errors["name"] = "missing_name"
-                elif selection in recent:
-                    self._temp_device_id = selection
-                    self._temp_name = name
-                    info = recent[selection]
-                    device_type = info.get("type")
-                    if device_type == TYPE_COVER:
-                        self.options[OPT_COVERS][selection] = {
-                            "name": name,
-                            "inverted": False,
-                        }
-                        return self._save()
-                    if device_type == TYPE_SWITCH:
-                        return await self.async_step_select_type()
-                    if device_type == TYPE_SENSOR and TRIGGER_FIELDS & set(
-                        info.get("data", {})
-                    ):
-                        return await self.async_step_select_sensor_type()
-                    self.options[OPT_SENSORS][selection] = name
-                    return self._save()
+                else:
+                    return await self._async_add_learned_new()
 
-        devices = {"refresh": "Refresh list", "clear": "Clear signals"}
+        devices = {
+            "refresh": self._txt("Refresh list", "Actualiser la liste"),
+            "clear": self._txt("Clear signals", "Effacer les signaux"),
+        }
         now = time.time()
         for dev_id, info in reversed(recent.items()):
             if self._configured(dev_id):
                 continue
-            age = int(now - info.get("last_seen", now))
-            devices[dev_id] = f"{dev_id} ({info.get('type')}, {age}s ago)"
+            devices[dev_id] = f"{dev_id} — {preview(info, now)} [{info.get('type')}]"
 
         if len(devices) == 2 and not errors:
             errors["base"] = "no_devices_found"
@@ -255,6 +290,90 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional("name"): str,
                 }
             ),
+            errors=errors,
+        )
+
+    async def _async_add_learned_new(self) -> config_entries.ConfigFlowResult:
+        """Create a new device from the learned id in ``_temp_device_id``."""
+        selection = self._temp_device_id
+        info = self._recent().get(selection, {})
+        device_type = info.get("type")
+        if device_type == TYPE_COVER:
+            self.options[OPT_COVERS][selection] = {
+                "name": self._temp_name,
+                "inverted": False,
+            }
+            return self._save()
+        if device_type == TYPE_SWITCH:
+            return await self.async_step_select_type()
+        if device_type == TYPE_SENSOR and TRIGGER_FIELDS & set(info.get("data", {})):
+            return await self.async_step_select_sensor_type()
+        self.options[OPT_SENSORS][selection] = self._temp_name
+        return self._save()
+
+    async def async_step_learned_target(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """New device, or additional id of a device with the same protocol."""
+        seen_id = self._temp_device_id or ""
+        info = self._recent().get(seen_id, {})
+        matches = devices_for_learned(
+            self.options, seen_id, info.get("type"), info.get("protocol")
+        )
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            target = user_input["target"]
+            if target == "new":
+                self._temp_name = (user_input.get("name") or "").strip()
+                if self._temp_name:
+                    return await self._async_add_learned_new()
+                errors["name"] = "missing_name"
+            else:
+                for key, device_id, alias in matches:
+                    if target == f"{key}|{device_id}":
+                        config = self.options[key][device_id]
+                        self.options[key][device_id] = with_aliases(
+                            config, [*device_aliases(config), alias]
+                        )
+                        return self._save()
+
+        options = [
+            SelectOptionDict(
+                value="new", label=self._txt("Add as a new device", "Nouvel appareil")
+            )
+        ]
+        for key, device_id, alias in matches:
+            name = device_config_name(self.options[key][device_id], device_id)
+            label = self._txt(
+                f"Additional id of {name} ({LABEL_BY_KEY[key]}, {device_id})",
+                f"ID supplémentaire de {name} ({LABEL_BY_KEY[key]}, {device_id})",
+            )
+            options.append(
+                SelectOptionDict(
+                    value=f"{key}|{device_id}",
+                    label=f"{label} — {self._preview_of(device_id)}",
+                )
+            )
+
+        return self.async_show_form(
+            step_id="learned_target",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("target", default="new"): SelectSelector(
+                        SelectSelectorConfig(
+                            options=options, mode=SelectSelectorMode.LIST
+                        )
+                    ),
+                    vol.Optional(
+                        "name", description={"suggested_value": self._temp_name}
+                    ): str,
+                }
+            ),
+            description_placeholders={
+                "device_id": seen_id,
+                "values": preview(info) or "-",
+            },
             errors=errors,
         )
 
@@ -460,6 +579,142 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         }[key]
         return [(platform, f"{UNIQUE_ID_PREFIXES[key]}{dev_id}")]
 
+    async def async_step_edit(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Choose the device to edit."""
+        choices = self._device_choices()
+        if not choices:
+            return self.async_abort(reason="no_configured_devices")
+        if user_input is not None:
+            self._edit_key, self._temp_device_id = self._split_choice(
+                user_input["device_id"]
+            )
+            return await self.async_step_edit_device()
+        return self.async_show_form(
+            step_id="edit",
+            data_schema=vol.Schema({vol.Required("device_id"): vol.In(choices)}),
+        )
+
+    async def async_step_edit_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Edit name, additional ids and settings of a device, in place."""
+        key = self._edit_key
+        device_id = self._temp_device_id or ""
+        config = self.options[key][device_id]
+        name = device_config_name(config, device_id)
+        aliases = device_aliases(config)
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            new_name = (user_input.get("name") or "").strip()
+            new_aliases = [
+                a.strip() for a in user_input.get(CONF_ALIASES, []) if a.strip()
+            ]
+            index = id_index(self.options)
+            if not new_name:
+                errors["name"] = "missing_name"
+            for alias in new_aliases:
+                if alias == device_id or not _valid_id(key, alias):
+                    errors[CONF_ALIASES] = "invalid_alias"
+                elif alias in index and index[alias][1] != device_id:
+                    errors[CONF_ALIASES] = "alias_conflict"
+            if not errors:
+                new_config = self._edited_config(key, config, user_input)
+                new_config["name"] = new_name
+                self.options[key][device_id] = with_aliases(new_config, new_aliases)
+                if new_name != name:
+                    dev_reg = dr.async_get(self.hass)
+                    if dev := dev_reg.async_get_device(
+                        identifiers={(DOMAIN, device_id)}
+                    ):
+                        dev_reg.async_update_device(dev.id, name=new_name)
+                return self._save()
+
+        now = time.time()
+        recent = self._recent()
+        alias_options: list[SelectOptionDict] = []
+        for alias in aliases:
+            alias_options.append(
+                SelectOptionDict(
+                    value=alias, label=f"{alias} — {self._preview_of(alias)}"
+                )
+            )
+        for alias, info in alias_candidates(recent, self.options, key, device_id):
+            if alias not in aliases:
+                alias_options.append(
+                    SelectOptionDict(
+                        value=alias, label=f"{alias} — {preview(info, now)}"
+                    )
+                )
+
+        schema: dict[Any, Any] = {
+            vol.Required("name", default=name): str,
+            vol.Optional(CONF_ALIASES, default=aliases): SelectSelector(
+                SelectSelectorConfig(
+                    options=alias_options,
+                    multiple=True,
+                    custom_value=True,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        }
+        schema.update(self._settings_schema(key, device_id, config))
+
+        return self.async_show_form(
+            step_id="edit_device",
+            data_schema=vol.Schema(schema),
+            description_placeholders={
+                "device_id": device_id,
+                "values": self._preview_of(device_id),
+                "candidates": str(len(alias_options) - len(aliases)),
+            },
+            errors=errors,
+        )
+
+    def _settings_schema(self, key: str, device_id: str, config: Any) -> dict:
+        """Type specific fields of the edit form."""
+        cfg = config if isinstance(config, dict) else {}
+        if key == OPT_COVERS:
+            return {vol.Optional("inverted", default=bool(cfg.get("inverted"))): bool}
+        if key == OPT_LIGHTS:
+            return {
+                vol.Required("type", default=cfg.get("type", "dimmable")): vol.In(
+                    ["dimmable", "hybrid", "switchable", "toggle"]
+                )
+            }
+        if key == OPT_BINARY_SENSORS:
+            if isinstance(config, dict):
+                current = cfg.get("device_class") or "none"
+            else:
+                detected = _detect_device_class(
+                    device_id, device_config_name(config, device_id)
+                )
+                current = detected.value if detected else "none"
+            return {
+                vol.Optional("device_class", default=current): vol.In(
+                    ["none"] + [c.value for c in BinarySensorDeviceClass]
+                ),
+                vol.Optional(
+                    "off_delay", description={"suggested_value": cfg.get("off_delay")}
+                ): vol.All(vol.Coerce(int), vol.Range(min=1)),
+            }
+        return {}
+
+    @staticmethod
+    def _edited_config(key: str, config: Any, user_input: dict[str, Any]) -> dict:
+        new = dict(config) if isinstance(config, dict) else {}
+        if key == OPT_COVERS:
+            new["inverted"] = bool(user_input.get("inverted", False))
+        elif key == OPT_LIGHTS:
+            new["type"] = user_input.get("type", "dimmable")
+        elif key == OPT_BINARY_SENSORS:
+            device_class = user_input.get("device_class")
+            new["device_class"] = device_class if device_class != "none" else None
+            new["off_delay"] = user_input.get("off_delay") or None
+        return new
+
     async def async_step_modify(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
@@ -472,7 +727,8 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             key, old_id = self._split_choice(user_input["device_id"])
             new_id = user_input["new_device_id"].strip()
-            if new_id != old_id and self._configured(new_id):
+            owner = id_index(self.options).get(new_id)
+            if new_id != old_id and owner is not None and owner != (key, old_id):
                 errors["new_device_id"] = "already_configured"
             elif not _valid_id(key, new_id):
                 errors["new_device_id"] = "invalid_device_id"
@@ -490,7 +746,17 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
                         platform, DOMAIN, old_uid
                     ):
                         ent_reg.async_update_entity(entity_id, new_unique_id=new_uid)
-                self.options[key][new_id] = self.options[key].pop(old_id)
+                config = self.options[key].pop(old_id)
+                if new_id in device_aliases(config):
+                    # Promote an additional id to primary id.
+                    config = with_aliases(
+                        config, [a for a in device_aliases(config) if a != new_id]
+                    )
+                self.options[key][new_id] = config
+                if new_id != old_id:
+                    runtime = getattr(self.config_entry, "runtime_data", None)
+                    if runtime is not None:
+                        runtime.pending_renames[new_id] = old_id
                 return self._save()
 
         return self.async_show_form(

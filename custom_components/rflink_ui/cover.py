@@ -11,9 +11,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import RFLinkConfigEntry
-from .const import OPT_COVERS, UNIQUE_ID_PREFIXES, device_config_name
-from .entity import DeviceHandle, RFLinkEntity, async_setup_dynamic_platform
-from .protocol import split_device_id
+from .const import OPT_COVERS, device_config_name
+from .entity import DeviceHandle, RFLinkCommandEntity, async_setup_dynamic_platform
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,7 +31,11 @@ async def async_setup_entry(
         return DeviceHandle(
             [
                 RFLinkCover(
-                    entry, device_id, device_config_name(config, device_id), inverted
+                    entry,
+                    device_id,
+                    device_config_name(config, device_id),
+                    inverted,
+                    config,
                 )
             ]
         )
@@ -42,7 +45,7 @@ async def async_setup_entry(
     )
 
 
-class RFLinkCover(RFLinkEntity, CoverEntity, RestoreEntity):
+class RFLinkCover(RFLinkCommandEntity, CoverEntity, RestoreEntity):
     """Representation of an RFLink cover (no position feedback)."""
 
     _attr_name = None
@@ -53,18 +56,25 @@ class RFLinkCover(RFLinkEntity, CoverEntity, RestoreEntity):
     # RFLink / Somfy RTS do not report an absolute position.
     _attr_current_cover_position = None
     _attr_is_closed = None
+    _option_key = OPT_COVERS
 
     def __init__(
-        self, entry: RFLinkConfigEntry, device_id: str, name: str, inverted: bool
+        self,
+        entry: RFLinkConfigEntry,
+        device_id: str,
+        name: str,
+        inverted: bool,
+        config: Any = None,
     ) -> None:
-        self._protocol, self._rflink_id, self._rflink_switch = split_device_id(
-            device_id
-        )
-        super().__init__(entry, device_id, name, self._protocol)
+        super().__init__(entry, device_id, name, config)
         self._inverted = inverted
-        self._attr_unique_id = f"{UNIQUE_ID_PREFIXES[OPT_COVERS]}{device_id}"
         self._attr_is_opening = False
         self._attr_is_closing = False
+
+    def _apply_settings(self, config: Any) -> bool:
+        if isinstance(config, dict):
+            self._inverted = bool(config.get("inverted", False))
+        return True
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

@@ -30,7 +30,8 @@
         "menu_options": {
           "add_learned": "Ajouter un appareil détecté",
           "add_manual": "Ajouter un appareil manuellement",
-          "modify": "Modifier l'ID d'un appareil",
+          "edit": "Modifier un appareil (nom, ID supplémentaires, réglages)",
+          "modify": "Changer l'ID principal d'un appareil",
           "remove": "Supprimer un appareil",
           "settings": "Réglages de la passerelle"
         }
@@ -52,7 +53,7 @@
         }
       },
       "modify": {
-        "title": "Modifier l'ID d'un appareil",
+        "title": "Changer l'ID principal d'un appareil",
         "data": {
           "device_id": "Appareil à modifier",
           "new_device_id": "Nouvel identifiant RFLink (ex: Unitec_1a4a_4)"
@@ -110,13 +111,42 @@
         "data": {
           "whole_remote": "Écouter tous les boutons de cette télécommande"
         }
+      },
+      "edit": {
+        "title": "Modifier un appareil",
+        "data": {
+          "device_id": "Appareil à modifier"
+        }
+      },
+      "edit_device": {
+        "title": "Modifier {device_id}",
+        "description": "Dernières valeurs de {device_id} : **{values}**\n\n**ID supplémentaires** : les trames reçues avec l'un de ces ID mettent à jour les mêmes entités (par ex. une sonde dont l'ID change au changement de piles). Les commandes sont toujours envoyées avec l'ID principal. Les ID compatibles reçus récemment sont listés avec leurs dernières valeurs ({candidates} trouvé(s)) ; vous pouvez aussi saisir un autre ID dans le champ.\n\nLes modifications sont appliquées sans recréer les entités : les automatisations ne se déclenchent pas.",
+        "data": {
+          "name": "Nom",
+          "aliases": "ID supplémentaires",
+          "inverted": "Inverser le sens",
+          "type": "Type de lumière",
+          "device_class": "Classe d'appareil",
+          "off_delay": "Délai d'extinction automatique (secondes)"
+        }
+      },
+      "learned_target": {
+        "title": "Nouvel appareil ou ID supplémentaire ?",
+        "description": "**{device_id}** — dernières valeurs : {values}\n\nIl utilise le même protocole que des appareils déjà configurés. Si c'est l'un d'eux avec un nouvel ID (changement de piles, télécommande remplacée), ajoutez-le comme ID supplémentaire : comparez avec les dernières valeurs affichées pour chaque appareil.",
+        "data": {
+          "target": "Utiliser cet ID pour",
+          "name": "Nom (nouvel appareil uniquement)"
+        }
       }
     },
     "error": {
       "no_devices_found": "Aucun signal RFLink inconnu récent n'a été détecté. Appuyez sur votre télécommande et réessayez.",
       "cannot_connect": "Impossible de se connecter au port série",
       "invalid_device_id": "ID RFLink invalide. Format attendu : protocole_id_switch (ex. Kaku_41_1), ou protocole_id pour les capteurs et événements.",
-      "already_configured": "Cet ID RFLink est déjà configuré."
+      "already_configured": "Cet ID RFLink est déjà configuré.",
+      "invalid_alias": "ID supplémentaire invalide (mauvais format, ou identique à l'ID principal).",
+      "alias_conflict": "Cet ID est déjà utilisé par un autre appareil.",
+      "missing_name": "Veuillez saisir un nom."
     },
     "abort": {
       "already_configured": "Cet appareil est déjà configuré.",

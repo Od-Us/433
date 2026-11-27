@@ -30,7 +30,8 @@
         "menu_options": {
           "add_learned": "Add recently detected device (Learning mode)",
           "add_manual": "Add device manually",
-          "modify": "Modify a device ID",
+          "edit": "Edit a device (name, additional IDs, settings)",
+          "modify": "Change the primary ID of a device",
           "remove": "Remove device",
           "settings": "Gateway settings"
         }
@@ -52,7 +53,7 @@
         }
       },
       "modify": {
-        "title": "Modify Device ID",
+        "title": "Change the primary ID of a device",
         "data": {
           "device_id": "Device to modify",
           "new_device_id": "New RFLink ID (e.g. Unitec_1a4a_4)"
@@ -110,13 +111,42 @@
         "data": {
           "whole_remote": "Listen to every button of this remote"
         }
+      },
+      "edit": {
+        "title": "Edit a device",
+        "data": {
+          "device_id": "Device to edit"
+        }
+      },
+      "edit_device": {
+        "title": "Edit {device_id}",
+        "description": "Last values of {device_id}: **{values}**\n\n**Additional IDs**: packets received with any of these IDs update the same entities (e.g. a probe whose ID changes when the batteries are replaced). Commands are always sent with the primary ID. Recently received compatible IDs are listed with their last values ({candidates} found); you can also type another ID in the field.\n\nChanges are applied without re-creating the entities, so automations are not triggered.",
+        "data": {
+          "name": "Name",
+          "aliases": "Additional IDs",
+          "inverted": "Invert direction",
+          "type": "Light type",
+          "device_class": "Device class",
+          "off_delay": "Auto-off delay (seconds)"
+        }
+      },
+      "learned_target": {
+        "title": "New device or additional ID?",
+        "description": "**{device_id}** — last values: {values}\n\nIt uses the same protocol as devices already configured. If it is one of them with a new ID (battery change, replaced remote), add it as an additional ID: compare with the last values shown for each device.",
+        "data": {
+          "target": "Use this ID for",
+          "name": "Name (new device only)"
+        }
       }
     },
     "error": {
       "cannot_connect": "Cannot connect to the serial port.",
       "no_devices_found": "No recent unknown RFLink signals detected. Press your remote and try again.",
       "invalid_device_id": "Invalid RFLink ID. Expected protocol_id_switch (e.g. Kaku_41_1), or protocol_id for sensors and events.",
-      "already_configured": "This RFLink ID is already configured."
+      "already_configured": "This RFLink ID is already configured.",
+      "invalid_alias": "Invalid additional ID (wrong format, or same as the primary ID).",
+      "alias_conflict": "This ID is already used by another device.",
+      "missing_name": "Please enter a name."
     },
     "abort": {
       "already_configured": "This device is already configured.",

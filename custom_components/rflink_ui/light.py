@@ -12,9 +12,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import RFLinkConfigEntry
-from .const import OPT_LIGHTS, UNIQUE_ID_PREFIXES, device_config_name
-from .entity import DeviceHandle, RFLinkEntity, async_setup_dynamic_platform
-from .protocol import split_device_id
+from .const import OPT_LIGHTS, device_config_name
+from .entity import DeviceHandle, RFLinkCommandEntity, async_setup_dynamic_platform
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,7 +46,11 @@ async def async_setup_entry(
         return DeviceHandle(
             [
                 RFLinkLight(
-                    entry, device_id, device_config_name(config, device_id), light_type
+                    entry,
+                    device_id,
+                    device_config_name(config, device_id),
+                    light_type,
+                    config,
                 )
             ]
         )
@@ -57,29 +60,41 @@ async def async_setup_entry(
     )
 
 
-class RFLinkLight(RFLinkEntity, LightEntity, RestoreEntity):
+class RFLinkLight(RFLinkCommandEntity, LightEntity, RestoreEntity):
     """Representation of an RFLink light."""
 
     _attr_name = None
+    _option_key = OPT_LIGHTS
 
     def __init__(
-        self, entry: RFLinkConfigEntry, device_id: str, name: str, light_type: str
+        self,
+        entry: RFLinkConfigEntry,
+        device_id: str,
+        name: str,
+        light_type: str,
+        config: Any = None,
     ) -> None:
-        self._protocol, self._rflink_id, self._rflink_switch = split_device_id(
-            device_id
-        )
-        super().__init__(entry, device_id, name, self._protocol)
-        self._light_type = light_type if light_type in LIGHT_TYPES else "dimmable"
-        self._attr_unique_id = f"{UNIQUE_ID_PREFIXES[OPT_LIGHTS]}{device_id}"
+        super().__init__(entry, device_id, name, config)
         self._attr_is_on = False
+        self._attr_brightness = None
+        self._set_light_type(light_type)
+
+    def _set_light_type(self, light_type: str) -> None:
+        self._light_type = light_type if light_type in LIGHT_TYPES else "dimmable"
         if self._light_type in DIMMABLE_TYPES:
             self._attr_color_mode = ColorMode.BRIGHTNESS
             self._attr_supported_color_modes = {ColorMode.BRIGHTNESS}
-            self._attr_brightness = 255
+            if self._attr_brightness is None:
+                self._attr_brightness = 255
         else:
             self._attr_color_mode = ColorMode.ONOFF
             self._attr_supported_color_modes = {ColorMode.ONOFF}
             self._attr_brightness = None
+
+    def _apply_settings(self, config: Any) -> bool:
+        if isinstance(config, dict):
+            self._set_light_type(config.get("type", "dimmable"))
+        return True
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

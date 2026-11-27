@@ -26,6 +26,7 @@ if PKG not in sys.modules:
 
 protocol = importlib.import_module(f"{PKG}.protocol")
 hub = importlib.import_module(f"{PKG}.hub")
+devices = importlib.import_module(f"{PKG}.devices")
 
 
 @pytest.hookimpl(tryfirst=True)
