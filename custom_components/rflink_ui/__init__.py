@@ -19,12 +19,14 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    BUTTON_UNIQUE_ID_PREFIX,
     CONF_REPEATS,
     DEFAULT_REPEATS,
     DEFAULT_TITLE,
     DEVICE_OPTION_KEYS,
     DOMAIN,
     EVENT_RECEIVED,
+    OPT_BUTTONS,
     OPT_SENSORS,
     OPT_SETTINGS,
     SENSOR_UNIQUE_ID_PREFIX,
@@ -50,6 +52,7 @@ PLATFORMS: list[Platform] = [
     Platform.LIGHT,
     Platform.COVER,
     Platform.EVENT,
+    Platform.BUTTON,
 ]
 
 SERVICE_SIMULATE_PACKET = "simulate_packet"
@@ -190,6 +193,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: RFLinkConfigEntry) -> bo
 
 def _parse_unique_id(unique_id: str) -> tuple[str, str] | None:
     """Return (options key, device id) for a device entity unique id."""
+    if unique_id.startswith(BUTTON_UNIQUE_ID_PREFIX):
+        return OPT_BUTTONS, unique_id[len(BUTTON_UNIQUE_ID_PREFIX) :]
     for option_key, prefix in UNIQUE_ID_PREFIXES.items():
         if unique_id.startswith(prefix):
             return option_key, unique_id[len(prefix) :]
@@ -206,7 +211,15 @@ def _parse_unique_id(unique_id: str) -> tuple[str, str] | None:
 def async_cleanup_registries(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Remove entities and devices that are no longer in the options."""
     configured = {key: set(entry.options.get(key, {})) for key in DEVICE_OPTION_KEYS}
+    buttons = entry.options.get(OPT_BUTTONS, {})
+    configured[OPT_BUTTONS] = set(buttons)
     all_ids = set().union(*configured.values())
+    # Devices of the command buttons (existing devices or virtual remotes).
+    all_ids |= {
+        cfg.get("device_id") or f"remote_{button_id}"
+        for button_id, cfg in buttons.items()
+        if isinstance(cfg, dict)
+    }
 
     ent_reg = er.async_get(hass)
     for ent in er.async_entries_for_config_entry(ent_reg, entry.entry_id):

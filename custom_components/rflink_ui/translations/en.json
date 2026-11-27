@@ -141,11 +141,30 @@
       },
       "monitor": {
         "title": "Signal monitor",
-        "description": "{status}\n\nLast {count} lines (most recent at the bottom). **Submit to refresh.**\n\n{lines}\n\n*Decoded*: packets of the protocols recognised by the gateway, with their values. *Raw*: every line exchanged with the gateway, unmodified. To also see the pulse sequences of the received signals, including those the gateway does not recognise, choose a pulse mode: it is switched off when you close this window, and after 10 minutes at most.",
+        "description": "{status}\n\n{count} lines, most recent first. **Submit to refresh**, or **select a line** and submit to see its details (every pulse, copy, re-emit).\n\n{lines}\n\n*Decoded*: packets of the protocols recognised by the gateway, with their values. *Raw*: every line exchanged with the gateway, unmodified. To also see the pulse sequences of the received signals, including those the gateway does not recognise, choose a pulse mode: it is switched off when you close this window, and after 10 minutes at most.",
         "data": {
           "level": "Level",
           "raw_mode": "Pulse sequences (raw level)",
-          "filter": "Filter (text contained in the line)"
+          "filter": "Filter (text contained in the line)",
+          "line": "Line (select to see the details)"
+        }
+      },
+      "monitor_detail": {
+        "title": "Signal details",
+        "description": "{header}\n\n{details}\n\n{pulses}\n\n**Copy**: the complete line is in the field below. Select all its text and copy it.",
+        "data": {
+          "copy": "Complete line",
+          "action": "Next"
+        }
+      },
+      "monitor_command": {
+        "title": "Command to re-emit",
+        "description": "A **button** entity will send this command to the gateway each time it is pressed.\n\n{note}",
+        "data": {
+          "command": "Gateway command (10;protocol;id;switch;command;)",
+          "name": "Button name",
+          "device": "Device",
+          "device_name": "New device name"
         }
       }
     },
@@ -157,7 +176,8 @@
       "invalid_alias": "Invalid additional ID (wrong format, or same as the primary ID).",
       "alias_conflict": "This ID is already used by another device.",
       "missing_name": "Please enter a name.",
-      "debug_failed": "The gateway did not accept the debug mode command."
+      "debug_failed": "The gateway did not accept the debug mode command.",
+      "invalid_command": "Invalid command: expected 10;protocol;id;switch;command;"
     },
     "abort": {
       "already_configured": "This device is already configured.",

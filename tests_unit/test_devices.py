@@ -225,3 +225,34 @@ def test_monitor_lines_levels():
         raw[5]
     ]
     assert len(d.monitor_lines(history, d.LEVEL_RAW, _hhmmss, limit=2)) == 2
+
+
+def test_pulses_and_commands():
+    fields = {
+        "Pulses": "10",
+        "Pulses(uSec)": "1200,450,1200,450,330,9800,240,240,240,240",
+    }
+    values = d.pulse_values(fields)
+    assert len(values) == 10
+    assert d.format_pulses(values, per_row=8).splitlines() == [
+        "   0: 1200  450 1200  450  330 9800  240  240",
+        "   8:  240  240",
+    ]
+    assert (
+        d.pulse_summary(values)
+        == "10 pulses · min 240 µs · max 9800 µs · total 14.4 ms"
+    )
+    assert d.pulse_values({}) == []
+
+    assert d.command_from_packet("Kaku", {"ID": "41", "SWITCH": "1", "CMD": "ON"}) == (
+        "10;Kaku;41;1;ON;"
+    )
+    assert d.command_from_packet("RTS", {"ID": "0A4B", "SWITCH": "0", "CMD": "UP"}) == (
+        "10;RTS;0A4B;0;UP;"
+    )
+    assert d.command_from_packet("Oregon", {"ID": "1", "TEMP": "00ba"}) is None
+
+    assert d.valid_command("10;Kaku;41;1;ON;")
+    assert not d.valid_command("10;Kaku;;1;ON;")
+    assert not d.valid_command("20;01;OK;")
+    assert not d.valid_command("10;Kaku;41;1;ON")

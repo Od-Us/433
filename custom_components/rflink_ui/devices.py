@@ -281,6 +281,29 @@ def monitor_lines(
     text_filter: str = "",
     limit: int = 30,
 ) -> list[str]:
+    """Rendered lines only (see ``monitor_rows``)."""
+    return [
+        text
+        for _, text in monitor_rows(
+            history,
+            level,
+            fmt_time,
+            names=names,
+            text_filter=text_filter,
+            limit=limit,
+        )
+    ]
+
+
+def monitor_rows(
+    history: Iterable[Mapping[str, Any]],
+    level: str,
+    fmt_time: Callable[[float], str],
+    *,
+    names: Mapping[str, str] | None = None,
+    text_filter: str = "",
+    limit: int = 30,
+) -> list[tuple[Mapping[str, Any], str]]:
     """Render the hub history for the monitor (most recent last).
 
     * ``decoded``: packets of recognised protocols, with decoded values and
@@ -291,7 +314,7 @@ def monitor_lines(
     """
     names = names or {}
     needle = text_filter.strip().lower()
-    lines: list[str] = []
+    lines: list[tuple[Mapping[str, Any], str]] = []
     for entry in history:
         raw = entry.get("raw", "")
         if needle and needle not in raw.lower():
@@ -301,13 +324,13 @@ def monitor_lines(
 
         if level == LEVEL_RAW:
             text = raw if len(raw) <= MAX_RAW_LINE else raw[: MAX_RAW_LINE - 1] + "…"
-            lines.append(f"{when} {arrow} {text}")
+            lines.append((entry, f"{when} {arrow} {text}"))
             continue
 
         if entry.get("dir") == "out":
             if raw in _HIDDEN_OUT or "DEBUG=" in raw:
                 continue
-            lines.append(f"{when} {arrow} {raw}")
+            lines.append((entry, f"{when} {arrow} {raw}"))
             continue
         if entry.get("kind") != KIND_DEVICE:
             continue
@@ -317,6 +340,70 @@ def monitor_lines(
         name = names.get(device_id)
         if name:
             label += f" [{name}]"
-        lines.append(f"{when} {arrow} {label} · {describe_fields(fields)}")
+        lines.append((entry, f"{when} {arrow} {label} · {describe_fields(fields)}"))
 
     return lines[-limit:] if limit else lines
+
+
+# ---------------------------------------------------------------------------
+# Signal details and re-emission
+# ---------------------------------------------------------------------------
+
+PULSES_FIELD = "Pulses(uSec)"
+PULSES_PER_ROW = 8
+
+
+def pulse_values(fields: Mapping[str, str]) -> list[int]:
+    """Pulse durations (µs) of a debug line, empty if none."""
+    raw = fields.get(PULSES_FIELD, "")
+    values = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            values.append(int(part))
+    return values
+
+
+def format_pulses(values: list[int], per_row: int = PULSES_PER_ROW) -> str:
+    """Every pulse, ``per_row`` per line, prefixed with the index of the first."""
+    width = len(str(max(values))) if values else 1
+    rows = []
+    for start in range(0, len(values), per_row):
+        chunk = values[start : start + per_row]
+        rows.append(f"{start:>4}: " + " ".join(f"{v:>{width}}" for v in chunk))
+    return "\n".join(rows)
+
+
+def pulse_summary(values: list[int]) -> str:
+    """``90 pulses · min 240 µs · max 9800 µs · total 54.2 ms``."""
+    if not values:
+        return ""
+    return (
+        f"{len(values)} pulses · min {min(values)} µs · max {max(values)} µs"
+        f" · total {sum(values) / 1000:.1f} ms"
+    )
+
+
+def command_from_packet(protocol: str | None, fields: Mapping[str, str]) -> str | None:
+    """Gateway command re-emitting a received command packet.
+
+    ``20;xx;Kaku;ID=41;SWITCH=1;CMD=ON;`` -> ``10;Kaku;41;1;ON;``. Sensor
+    packets and raw pulse lines cannot be re-emitted with standard commands.
+    """
+    if not protocol or "ID" not in fields or "CMD" not in fields:
+        return None
+    switch = fields.get("SWITCH", "0")
+    return f"10;{protocol};{fields['ID']};{switch};{fields['CMD']};"
+
+
+def valid_command(frame: str) -> bool:
+    """Loose check of a ``10;...;`` gateway command."""
+    frame = frame.strip()
+    parts = frame.split(";")
+    return (
+        frame.startswith("10;")
+        and frame.endswith(";")
+        and len(parts) >= 3
+        and all(parts[1:-1])
+        and "\n" not in frame
+    )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import glob
+import uuid
 from typing import Any
 
 import serialx
@@ -18,6 +19,8 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
 )
 from homeassistant.util import dt as dt_util
 
@@ -29,6 +32,7 @@ from .const import (
     DEVICE_OPTION_KEYS,
     DOMAIN,
     OPT_BINARY_SENSORS,
+    OPT_BUTTONS,
     OPT_COVERS,
     OPT_EVENTS,
     OPT_LIGHTS,
@@ -44,13 +48,18 @@ from .devices import (
     LEVEL_DECODED,
     LEVEL_RAW,
     alias_candidates,
+    command_from_packet,
     describe_fields,
     describe_seen,
     device_aliases,
     devices_for_learned,
+    format_pulses,
     id_index,
-    monitor_lines,
+    monitor_rows,
+    pulse_summary,
+    pulse_values,
     recent_info_for,
+    valid_command,
     with_aliases,
 )
 from .hub import RFLinkCommandError
@@ -180,12 +189,14 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             "filter": "",
         }
         self._monitor_debug = False
+        self._selected: dict[str, Any] | None = None
+        self._command_prefill: str | None = None
 
     def _load_options(self) -> None:
         if self.options:
             return
         self.options = dict(self.config_entry.options)
-        for key in (*DEVICE_OPTION_KEYS, OPT_SETTINGS):
+        for key in (*DEVICE_OPTION_KEYS, OPT_SETTINGS, OPT_BUTTONS):
             self.options[key] = dict(self.options.get(key, {}))
 
     def _hub(self):
@@ -287,9 +298,17 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             except RFLinkCommandError:
                 errors["base"] = "debug_failed"
             self._monitor_debug = self._monitor_debug or hub.debug_mode is not None
+            if (selected := user_input.get("line")) and (
+                entry := next(
+                    (e for e in hub.history if str(e.get("seq")) == selected), None
+                )
+            ):
+                # Copy: the line may leave the history while it is displayed.
+                self._selected = dict(entry)
+                return await self.async_step_monitor_detail()
 
         level = self._monitor["level"]
-        lines = monitor_lines(
+        rows = monitor_rows(
             list(hub.history),
             level,
             self._fmt_ts,
@@ -297,9 +316,13 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             text_filter=self._monitor["filter"],
             limit=40 if level == LEVEL_DECODED else 25,
         )
-        block = "\n".join(lines) or self._txt(
-            "(nothing received yet)", "(rien reçu pour l'instant)"
-        )
+        line_options = [
+            SelectOptionDict(
+                value=str(entry.get("seq")),
+                label=text if len(text) <= 150 else text[:149] + "…",
+            )
+            for entry, text in reversed(rows)  # most recent first
+        ]
         debug_labels = {
             None: self._txt("off", "désactivé"),
             "unknown": self._txt(
@@ -316,41 +339,211 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             f"{debug_labels.get(hub.debug_mode)}",
         )
 
+        schema: dict[Any, Any] = {
+            vol.Required("level", default=level): vol.In(
+                {
+                    LEVEL_DECODED: self._txt(
+                        "Decoded (recognised protocols)",
+                        "Décodé (protocoles reconnus)",
+                    ),
+                    LEVEL_RAW: self._txt(
+                        "Raw (every line from the gateway)",
+                        "Brut (toutes les lignes de la passerelle)",
+                    ),
+                }
+            ),
+            vol.Required("raw_mode", default=self._monitor["raw_mode"]): vol.In(
+                {
+                    "off": self._txt(
+                        "No pulse sequences", "Pas de séquences d'impulsions"
+                    ),
+                    "unknown": debug_labels["unknown"],
+                    "all": debug_labels["all"],
+                }
+            ),
+            vol.Optional(
+                "filter",
+                description={"suggested_value": self._monitor["filter"]},
+            ): str,
+        }
+        if line_options:
+            schema[vol.Optional("line")] = SelectSelector(
+                SelectSelectorConfig(options=line_options, mode=SelectSelectorMode.LIST)
+            )
+
         return self.async_show_form(
             step_id="monitor",
+            data_schema=vol.Schema(schema),
+            description_placeholders={
+                "status": status,
+                "count": str(len(rows)),
+                "lines": (
+                    ""
+                    if rows
+                    else self._txt(
+                        "*(nothing received yet)*", "*(rien reçu pour l'instant)*"
+                    )
+                ),
+            },
+            errors=errors,
+        )
+
+    async def async_step_monitor_detail(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Details of the selected line: decoded fields, every pulse, copy."""
+        entry = self._selected or {}
+        if user_input is not None:
+            if user_input.get("action") == "command":
+                return await self.async_step_monitor_command()
+            return await self.async_step_monitor()
+
+        raw = entry.get("raw", "")
+        fields = entry.get("fields") or {}
+        outgoing = entry.get("dir") == "out"
+        when = self._fmt_ts(entry["ts"]) if entry.get("ts") else "?"
+        direction = (
+            self._txt("sent by Home Assistant", "envoyée par Home Assistant")
+            if outgoing
+            else self._txt("received from the gateway", "reçue de la passerelle")
+        )
+        header = f"**{when}** · {direction}"
+        if entry.get("protocol") and entry.get("kind") == "device":
+            header += f" · {entry['protocol']}"
+            if name := self._names().get(entry.get("device_id") or ""):
+                header += f" [{name}]"
+
+        details = ""
+        if fields and entry.get("kind") == "device":
+            details = "\n".join(
+                f"- `{key}` = `{value}`" for key, value in fields.items()
+            )
+            details += f"\n\n{describe_fields(fields)}"
+
+        pulses = pulse_values(fields)
+        pulses_text = (
+            f"{pulse_summary(pulses)}\n\n```\n{format_pulses(pulses)}\n```"
+            if pulses
+            else ""
+        )
+
+        self._command_prefill = (
+            raw if outgoing and valid_command(raw) else None
+        ) or command_from_packet(entry.get("protocol"), fields)
+
+        actions = {
+            "back": self._txt("Back to the monitor", "Retour au moniteur"),
+            "command": self._txt(
+                "Create a command to re-emit (button entity)",
+                "Créer une commande à réémettre (entité bouton)",
+            ),
+        }
+        return self.async_show_form(
+            step_id="monitor_detail",
             data_schema=vol.Schema(
                 {
-                    vol.Required("level", default=level): vol.In(
-                        {
-                            LEVEL_DECODED: self._txt(
-                                "Decoded (recognised protocols)",
-                                "Décodé (protocoles reconnus)",
-                            ),
-                            LEVEL_RAW: self._txt(
-                                "Raw (every line from the gateway)",
-                                "Brut (toutes les lignes de la passerelle)",
-                            ),
-                        }
-                    ),
-                    vol.Required("raw_mode", default=self._monitor["raw_mode"]): vol.In(
-                        {
-                            "off": self._txt(
-                                "No pulse sequences", "Pas de séquences d'impulsions"
-                            ),
-                            "unknown": debug_labels["unknown"],
-                            "all": debug_labels["all"],
-                        }
-                    ),
                     vol.Optional(
-                        "filter",
-                        description={"suggested_value": self._monitor["filter"]},
-                    ): str,
+                        "copy", description={"suggested_value": raw}
+                    ): TextSelector(TextSelectorConfig(multiline=True)),
+                    vol.Required("action", default="back"): vol.In(actions),
                 }
             ),
             description_placeholders={
-                "status": status,
-                "count": str(len(lines)),
-                "lines": f"```\n{block}\n```",
+                "header": header,
+                "details": details or "-",
+                "pulses": pulses_text
+                or self._txt(
+                    "*No pulse sequence in this line. Enable a pulse mode at "
+                    "the raw level to receive them.*",
+                    "*Pas de séquence d'impulsions dans cette ligne. Activez un "
+                    "mode d'impulsions au niveau brut pour les recevoir.*",
+                ),
+            },
+        )
+
+    def _command_devices(self) -> dict[str, str]:
+        """Devices a command button can be attached to."""
+        choices = {"new": self._txt("New device", "Nouvel appareil")}
+        for key in DEVICE_OPTION_KEYS:
+            for dev_id, config in self.options[key].items():
+                choices[f"dev|{dev_id}"] = (
+                    f"{device_config_name(config, dev_id)}"
+                    f" ({LABEL_BY_KEY[key]}, {dev_id})"
+                )
+        for button_id, cfg in self.options[OPT_BUTTONS].items():
+            if isinstance(cfg, dict) and cfg.get("device_name"):
+                device_id = cfg.get("device_id") or f"remote_{button_id}"
+                choices[f"remote|{device_id}|{cfg['device_name']}"] = self._txt(
+                    f"{cfg['device_name']} (virtual remote)",
+                    f"{cfg['device_name']} (télécommande virtuelle)",
+                )
+        return choices
+
+    async def async_step_monitor_command(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Store the signal as a command sent by a button entity."""
+        errors: dict[str, str] = {}
+        choices = self._command_devices()
+
+        if user_input is not None:
+            command = (user_input.get("command") or "").strip()
+            name = (user_input.get("name") or "").strip()
+            target = user_input.get("device", "new")
+            device_name = (user_input.get("device_name") or "").strip()
+            if not valid_command(command):
+                errors["command"] = "invalid_command"
+            if not name:
+                errors["name"] = "missing_name"
+            if target == "new" and not device_name:
+                errors["device_name"] = "missing_name"
+            if not errors:
+                button_id = uuid.uuid4().hex[:10]
+                config: dict[str, Any] = {"name": name, "command": command}
+                if target == "new":
+                    config["device_id"] = f"remote_{button_id}"
+                    config["device_name"] = device_name
+                elif target.startswith("remote|"):
+                    _, device_id, remote_name = target.split("|", 2)
+                    config["device_id"] = device_id
+                    config["device_name"] = remote_name
+                else:
+                    config["device_id"] = target.split("|", 1)[1]
+                self.options[OPT_BUTTONS][button_id] = config
+                return self._save()
+
+        prefill = self._command_prefill or ""
+        default_name = " ".join(prefill.strip(";").split(";")[1:]) if prefill else ""
+        return self.async_show_form(
+            step_id="monitor_command",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "command", description={"suggested_value": prefill}
+                    ): str,
+                    vol.Required(
+                        "name", description={"suggested_value": default_name}
+                    ): str,
+                    vol.Required("device", default="new"): vol.In(choices),
+                    vol.Optional("device_name"): str,
+                }
+            ),
+            description_placeholders={
+                "note": (
+                    ""
+                    if prefill
+                    else self._txt(
+                        "**This signal cannot be turned into a command automatically**"
+                        " (sensor values or raw pulses: the standard RFLink firmware "
+                        "cannot re-emit raw pulses). Type a `10;...;` command if you "
+                        "know it.",
+                        "**Ce signal ne peut pas être converti automatiquement en "
+                        "commande** (valeurs de capteur ou impulsions brutes : le "
+                        "firmware RFLink standard ne sait pas réémettre des impulsions"
+                        " brutes). Saisissez une commande `10;...;` si vous la "
+                        "connaissez.",
+                    )
+                ),
             },
             errors=errors,
         )
@@ -917,13 +1110,22 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_remove(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Remove a device."""
+        """Remove a device or a command button."""
         choices = self._device_choices()
+        for button_id, cfg in self.options[OPT_BUTTONS].items():
+            label = self._txt("Command", "Commande")
+            name = cfg.get("name", button_id) if isinstance(cfg, dict) else button_id
+            command = cfg.get("command", "") if isinstance(cfg, dict) else ""
+            choices[f"[cmd] {button_id}"] = f"{name} ({label}, {command})"
         if not choices:
             return self.async_abort(reason="no_configured_devices")
 
         if user_input is not None:
-            key, dev_id = self._split_choice(user_input["device_id"])
+            selection = user_input["device_id"]
+            if selection.startswith("[cmd] "):
+                self.options[OPT_BUTTONS].pop(selection[6:], None)
+                return self._save()
+            key, dev_id = self._split_choice(selection)
             self.options[key].pop(dev_id, None)
             return self._save()
 

@@ -12,6 +12,10 @@ OPT_LIGHTS = "lights"
 OPT_COVERS = "covers"
 OPT_EVENTS = "events"
 OPT_SETTINGS = "settings"
+# Commands re-emitted by button entities: {button_id: {name, command,
+# device_id, device_name}}
+OPT_BUTTONS = "buttons"
+BUTTON_UNIQUE_ID_PREFIX = "rflink_button_"
 
 DEVICE_OPTION_KEYS = (
     OPT_SWITCHES,

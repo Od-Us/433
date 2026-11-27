@@ -104,6 +104,8 @@ Once configured, click **Configure** on the integration card to:
   - *Decoded*: packets of the protocols recognised by the gateway, with decoded values and the name of the configured device (equivalent to reading the debug logs), plus the commands sent by Home Assistant.
   - *Raw*: every line exchanged with the gateway, unmodified (PING/PONG, acknowledgements, lines that are not RFLink frames). Optionally, the gateway pulse debug mode prints the **pulse sequences** of received signals: `RFUDEBUG` for signals the gateway does not recognise, `RFDEBUG` for all signals. The debug mode is switched off when the window is closed, and after 10 minutes at most.
   - A filter keeps only the lines containing a text.
+  - **Select a line** to see its details: decoded fields and the **complete pulse sequence** (every value, with count, min, max and total duration). The complete line is shown in a text field, ready to copy.
+  - From the details, **create a command to re-emit**: a **button** entity that sends the `10;...;` command, attached to a new device (virtual remote) or to a device already configured. The command is pre-filled for recognised command packets and for commands sent by Home Assistant; raw pulses cannot be re-emitted by the standard RFLink firmware. Command buttons are removed from *Remove a device*.
 - **Gateway settings**: Number of times each RF command is sent (1–10).
 - **Edit a device**: change the name, the **additional IDs** and the type settings (cover direction, light type, binary sensor class and off delay). Changes are applied to the live entities, without removing them: their state never goes through `unavailable`, so automations are not triggered.
 

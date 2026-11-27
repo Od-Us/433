@@ -141,11 +141,30 @@
       },
       "monitor": {
         "title": "Moniteur des signaux",
-        "description": "{status}\n\n{count} dernières lignes (la plus récente en bas). **Validez pour actualiser.**\n\n{lines}\n\n*Décodé* : trames des protocoles reconnus par la passerelle, avec leurs valeurs. *Brut* : toutes les lignes échangées avec la passerelle, telles quelles. Pour voir aussi les séquences d'impulsions des signaux reçus, y compris ceux que la passerelle ne reconnaît pas, choisissez un mode d'impulsions : il est désactivé à la fermeture de cette fenêtre, et au plus tard après 10 minutes.",
+        "description": "{status}\n\n{count} lignes, la plus récente en premier. **Validez pour actualiser**, ou **sélectionnez une ligne** puis validez pour voir son détail (toutes les impulsions, copie, réémission).\n\n{lines}\n\n*Décodé* : trames des protocoles reconnus par la passerelle, avec leurs valeurs. *Brut* : toutes les lignes échangées avec la passerelle, telles quelles. Pour voir aussi les séquences d'impulsions des signaux reçus, y compris ceux que la passerelle ne reconnaît pas, choisissez un mode d'impulsions : il est désactivé à la fermeture de cette fenêtre, et au plus tard après 10 minutes.",
         "data": {
           "level": "Niveau",
           "raw_mode": "Séquences d'impulsions (niveau brut)",
-          "filter": "Filtre (texte contenu dans la ligne)"
+          "filter": "Filtre (texte contenu dans la ligne)",
+          "line": "Ligne (sélectionnez pour voir le détail)"
+        }
+      },
+      "monitor_detail": {
+        "title": "Détail du signal",
+        "description": "{header}\n\n{details}\n\n{pulses}\n\n**Copier** : la ligne complète est dans le champ ci-dessous. Sélectionnez tout son texte et copiez-le.",
+        "data": {
+          "copy": "Ligne complète",
+          "action": "Ensuite"
+        }
+      },
+      "monitor_command": {
+        "title": "Commande à réémettre",
+        "description": "Une entité **bouton** enverra cette commande à la passerelle à chaque appui.\n\n{note}",
+        "data": {
+          "command": "Commande passerelle (10;protocole;id;switch;commande;)",
+          "name": "Nom du bouton",
+          "device": "Appareil",
+          "device_name": "Nom du nouvel appareil"
         }
       }
     },
@@ -157,7 +176,8 @@
       "invalid_alias": "ID supplémentaire invalide (mauvais format, ou identique à l'ID principal).",
       "alias_conflict": "Cet ID est déjà utilisé par un autre appareil.",
       "missing_name": "Veuillez saisir un nom.",
-      "debug_failed": "La passerelle n'a pas accepté la commande du mode debug."
+      "debug_failed": "La passerelle n'a pas accepté la commande du mode debug.",
+      "invalid_command": "Commande invalide : format attendu 10;protocole;id;switch;commande;"
     },
     "abort": {
       "already_configured": "Cet appareil est déjà configuré.",

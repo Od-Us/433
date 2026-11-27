@@ -117,6 +117,7 @@ class RFLinkHub:
         # Every line exchanged with the gateway, for the signal monitor.
         self.history: deque[dict[str, Any]] = deque(maxlen=HISTORY_MAX)
         self.debug_mode: str | None = None
+        self._seq = 0
         self._debug_off_handle: asyncio.TimerHandle | None = None
 
     # ------------------------------------------------------------------ state
@@ -275,6 +276,12 @@ class RFLinkHub:
             if decoded:
                 self.handle_line(decoded)
 
+    def _record(self, entry: dict[str, Any]) -> None:
+        """Add a line to the history, with a unique sequence number."""
+        self._seq += 1
+        entry["seq"] = self._seq
+        self.history.append(entry)
+
     # ------------------------------------------------------------- receiving
 
     def handle_line(self, line: str) -> Packet | None:
@@ -282,7 +289,7 @@ class RFLinkHub:
         _LOGGER.debug("RFLink <- %s", line)
         now = time.time()
         packet = parse_line(line)
-        self.history.append(
+        self._record(
             {
                 "ts": now,
                 "dir": DIR_IN,
@@ -337,7 +344,7 @@ class RFLinkHub:
             self._pending = loop.create_future()
             try:
                 _LOGGER.debug("RFLink -> %s", frame.strip())
-                self.history.append(
+                self._record(
                     {
                         "ts": time.time(),
                         "dir": DIR_OUT,
