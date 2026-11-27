@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import glob
-import time
 from typing import Any
 
 import serialx
@@ -20,6 +19,7 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
 )
+from homeassistant.util import dt as dt_util
 
 from .binary_sensor import _detect_device_class
 from .const import (
@@ -40,14 +40,19 @@ from .const import (
 )
 from .devices import (
     CONF_ALIASES,
+    LEVEL_DECODED,
+    LEVEL_RAW,
     alias_candidates,
+    describe_fields,
+    describe_seen,
     device_aliases,
     devices_for_learned,
     id_index,
-    preview,
+    monitor_lines,
     recent_info_for,
     with_aliases,
 )
+from .hub import RFLinkCommandError
 from .protocol import SENSOR_FIELDS, TYPE_COVER, TYPE_SENSOR, TYPE_SWITCH
 
 ENTER_MANUALLY = "Enter manually"
@@ -166,6 +171,12 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         self._temp_device_id: str | None = None
         self._temp_name: str | None = None
         self._edit_key: str = OPT_SWITCHES
+        self._monitor: dict[str, Any] = {
+            "level": LEVEL_DECODED,
+            "raw_mode": "off",
+            "filter": "",
+        }
+        self._monitor_debug = False
 
     def _load_options(self) -> None:
         if self.options:
@@ -193,9 +204,35 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
         """Text for labels built at runtime (not covered by translations)."""
         return fr if self._fr() else en
 
+    def _fmt_ts(self, ts: float) -> str:
+        """Local time of a timestamp (date added when it is not today)."""
+        local = dt_util.as_local(dt_util.utc_from_timestamp(ts))
+        if local.date() == dt_util.now().date():
+            return local.strftime("%H:%M:%S")
+        return local.strftime("%d/%m %H:%M:%S")
+
+    def _describe(self, info: dict[str, Any] | None) -> str | None:
+        """Last values plus first / last reception time of a received id."""
+        if not info:
+            return None
+        seen = describe_seen(
+            info,
+            self._fmt_ts,
+            self._txt("first", "1re"),
+            self._txt("last", "dern."),
+        )
+        return f"{describe_fields(info.get('data', {}))} — {seen}"
+
     def _preview_of(self, device_id: str) -> str:
-        text = preview(recent_info_for(self._recent(), device_id))
+        text = self._describe(recent_info_for(self._recent(), device_id))
         return text or self._txt("not received recently", "pas reçu récemment")
+
+    def _names(self) -> dict[str, str]:
+        """Name of the configured device for every id (primary and aliases)."""
+        return {
+            any_id: device_config_name(self.options[key][primary], primary)
+            for any_id, (key, primary) in id_index(self.options).items()
+        }
 
     def _save(self) -> config_entries.ConfigFlowResult:
         return self.async_create_entry(title="", data=self.options)
@@ -214,9 +251,115 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
                 "edit",
                 "modify",
                 "remove",
+                "monitor",
                 "settings",
             ],
         )
+
+    # ------------------------------------------------------- signal monitor
+
+    async def async_step_monitor(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Show the signals exchanged with the gateway. Submit to refresh."""
+        hub = self._hub()
+        if hub is None:
+            return self.async_abort(reason="not_loaded")
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            self._monitor = {
+                "level": user_input.get("level", LEVEL_DECODED),
+                "raw_mode": user_input.get("raw_mode", "off"),
+                "filter": user_input.get("filter") or "",
+            }
+            wanted = (
+                self._monitor["raw_mode"]
+                if self._monitor["level"] == LEVEL_RAW
+                and self._monitor["raw_mode"] != "off"
+                else None
+            )
+            try:
+                await hub.async_set_debug_mode(wanted)
+            except RFLinkCommandError:
+                errors["base"] = "debug_failed"
+            self._monitor_debug = self._monitor_debug or hub.debug_mode is not None
+
+        level = self._monitor["level"]
+        lines = monitor_lines(
+            list(hub.history),
+            level,
+            self._fmt_ts,
+            names=self._names(),
+            text_filter=self._monitor["filter"],
+            limit=40 if level == LEVEL_DECODED else 25,
+        )
+        block = "\n".join(lines) or self._txt(
+            "(nothing received yet)", "(rien reçu pour l'instant)"
+        )
+        debug_labels = {
+            None: self._txt("off", "désactivé"),
+            "unknown": self._txt(
+                "unrecognised signals (RFUDEBUG)", "signaux non reconnus (RFUDEBUG)"
+            ),
+            "all": self._txt("all signals (RFDEBUG)", "tous les signaux (RFDEBUG)"),
+        }
+        status = self._txt(
+            f"Gateway {'connected' if hub.connected else 'DISCONNECTED'}"
+            f" · firmware {hub.firmware or '?'} · raw pulse mode: "
+            f"{debug_labels.get(hub.debug_mode)}",
+            f"Passerelle {'connectée' if hub.connected else 'DÉCONNECTÉE'}"
+            f" · firmware {hub.firmware or '?'} · mode impulsions brutes : "
+            f"{debug_labels.get(hub.debug_mode)}",
+        )
+
+        return self.async_show_form(
+            step_id="monitor",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("level", default=level): vol.In(
+                        {
+                            LEVEL_DECODED: self._txt(
+                                "Decoded (recognised protocols)",
+                                "Décodé (protocoles reconnus)",
+                            ),
+                            LEVEL_RAW: self._txt(
+                                "Raw (every line from the gateway)",
+                                "Brut (toutes les lignes de la passerelle)",
+                            ),
+                        }
+                    ),
+                    vol.Required("raw_mode", default=self._monitor["raw_mode"]): vol.In(
+                        {
+                            "off": self._txt(
+                                "No pulse sequences", "Pas de séquences d'impulsions"
+                            ),
+                            "unknown": debug_labels["unknown"],
+                            "all": debug_labels["all"],
+                        }
+                    ),
+                    vol.Optional(
+                        "filter",
+                        description={"suggested_value": self._monitor["filter"]},
+                    ): str,
+                }
+            ),
+            description_placeholders={
+                "status": status,
+                "count": str(len(lines)),
+                "lines": f"```\n{block}\n```",
+            },
+            errors=errors,
+        )
+
+    @callback
+    def async_remove(self) -> None:
+        """Flow closed: switch the gateway debug mode off if we enabled it."""
+        hub = self._hub()
+        if self._monitor_debug and hub is not None and hub.debug_mode is not None:
+            self.hass.async_create_background_task(
+                hub.async_disable_debug(), "rflink_ui monitor debug off"
+            )
 
     async def async_step_settings(
         self, user_input: dict[str, Any] | None = None
@@ -273,11 +416,10 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             "refresh": self._txt("Refresh list", "Actualiser la liste"),
             "clear": self._txt("Clear signals", "Effacer les signaux"),
         }
-        now = time.time()
         for dev_id, info in reversed(recent.items()):
             if self._configured(dev_id):
                 continue
-            devices[dev_id] = f"{dev_id} — {preview(info, now)} [{info.get('type')}]"
+            devices[dev_id] = f"{dev_id} — {self._describe(info)} [{info.get('type')}]"
 
         if len(devices) == 2 and not errors:
             errors["base"] = "no_devices_found"
@@ -372,7 +514,7 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             ),
             description_placeholders={
                 "device_id": seen_id,
-                "values": preview(info) or "-",
+                "values": self._describe(info) or "-",
             },
             errors=errors,
         )
@@ -632,7 +774,6 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
                         dev_reg.async_update_device(dev.id, name=new_name)
                 return self._save()
 
-        now = time.time()
         recent = self._recent()
         alias_options: list[SelectOptionDict] = []
         for alias in aliases:
@@ -645,7 +786,7 @@ class RFLinkOptionsFlowHandler(config_entries.OptionsFlow):
             if alias not in aliases:
                 alias_options.append(
                     SelectOptionDict(
-                        value=alias, label=f"{alias} — {preview(info, now)}"
+                        value=alias, label=f"{alias} — {self._describe(info)}"
                     )
                 )
 

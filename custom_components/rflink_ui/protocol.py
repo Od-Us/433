@@ -36,6 +36,9 @@ TYPE_SENSOR = "sensor"
 
 COVER_COMMANDS = {"UP", "DOWN", "STOP"}
 
+# Gateway debug modes printing raw pulse sequences ("20;xx;DEBUG;Pulses=..").
+DEBUG_COMMANDS = ("RFDEBUG", "RFUDEBUG", "QRFDEBUG")
+
 
 @dataclass(frozen=True)
 class Packet:
@@ -67,6 +70,11 @@ def parse_line(line: str) -> Packet | None:
 
     if name in (RESPONSE_OK, RESPONSE_UNKNOWN, RESPONSE_PONG):
         return Packet(raw=line, kind=KIND_RESPONSE, response=name)
+
+    # Echo of a debug mode command (10;RFDEBUG=ON; -> 20;xx;RFDEBUG=ON;) is
+    # the acknowledgement of that command.
+    if name.split("=", 1)[0] in DEBUG_COMMANDS:
+        return Packet(raw=line, kind=KIND_RESPONSE, response=RESPONSE_OK)
 
     fields: dict[str, str] = {}
     for part in parts[2:] if name.startswith("VER=") else parts[3:]:

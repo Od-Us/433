@@ -98,6 +98,10 @@ Once configured, click **Configure** on the integration card to:
 - **Add device manually**: Manually type in the Protocol and ID (supports custom naming, light dimming styles, and cover direction inversion).
 - **Modify device ID**: Rename or remap an existing device's RFLink ID.
 - **Remove device**: Delete an existing device from the integration.
+- **Signal monitor**: shows the signals exchanged with the gateway, refreshed each time you submit the form.
+  - *Decoded*: packets of the protocols recognised by the gateway, with decoded values and the name of the configured device (equivalent to reading the debug logs), plus the commands sent by Home Assistant.
+  - *Raw*: every line exchanged with the gateway, unmodified (PING/PONG, acknowledgements, lines that are not RFLink frames). Optionally, the gateway pulse debug mode prints the **pulse sequences** of received signals: `RFUDEBUG` for signals the gateway does not recognise, `RFDEBUG` for all signals. The debug mode is switched off when the window is closed, and after 10 minutes at most.
+  - A filter keeps only the lines containing a text.
 - **Gateway settings**: Number of times each RF command is sent (1–10).
 - **Edit a device**: change the name, the **additional IDs** and the type settings (cover direction, light type, binary sensor class and off delay). Changes are applied to the live entities, without removing them: their state never goes through `unavailable`, so automations are not triggered.
 
@@ -105,7 +109,7 @@ Once configured, click **Configure** on the integration card to:
 
 A device can answer to several RFLink IDs: packets received on any of them update the same entities (a temperature probe whose ID changes when the batteries are replaced, a second remote for the same light...). Commands are always sent with the primary ID.
 
-- In **Edit a device**, compatible IDs received recently are proposed **with their last values** (e.g. `Oregon TempHygro_0B12 — 21.4°C · 48% · bat. OK (12 s)`), so you can tell several probes apart. Any other ID can be typed in.
+- In **Edit a device**, compatible IDs received recently are proposed **with their last values** (e.g. `Oregon TempHygro_0B12 — 21.4°C · 48% · bat. OK — first 20:05:12 · last 20:17:40 · 14×`): time of the first and last reception and number of receptions, so you can tell several probes apart. Any other ID can be typed in.
 - In the **learning mode**, an unknown ID using the same protocol as a configured device can be added as an additional ID of that device; the last values of both are shown side by side.
 - **Change the primary ID** keeps the entities, their history and automations (an additional ID can be promoted to primary).
 - Sensors expose the `rflink_id` attribute: the RF ID that sent the last values.

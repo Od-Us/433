@@ -33,6 +33,7 @@
           "edit": "Modifier un appareil (nom, ID supplémentaires, réglages)",
           "modify": "Changer l'ID principal d'un appareil",
           "remove": "Supprimer un appareil",
+          "monitor": "Moniteur des signaux (décodé / brut)",
           "settings": "Réglages de la passerelle"
         }
       },
@@ -137,6 +138,15 @@
           "target": "Utiliser cet ID pour",
           "name": "Nom (nouvel appareil uniquement)"
         }
+      },
+      "monitor": {
+        "title": "Moniteur des signaux",
+        "description": "{status}\n\n{count} dernières lignes (la plus récente en bas). **Validez pour actualiser.**\n\n{lines}\n\n*Décodé* : trames des protocoles reconnus par la passerelle, avec leurs valeurs. *Brut* : toutes les lignes échangées avec la passerelle, telles quelles. Pour voir aussi les séquences d'impulsions des signaux reçus, y compris ceux que la passerelle ne reconnaît pas, choisissez un mode d'impulsions : il est désactivé à la fermeture de cette fenêtre, et au plus tard après 10 minutes.",
+        "data": {
+          "level": "Niveau",
+          "raw_mode": "Séquences d'impulsions (niveau brut)",
+          "filter": "Filtre (texte contenu dans la ligne)"
+        }
       }
     },
     "error": {
@@ -146,11 +156,13 @@
       "already_configured": "Cet ID RFLink est déjà configuré.",
       "invalid_alias": "ID supplémentaire invalide (mauvais format, ou identique à l'ID principal).",
       "alias_conflict": "Cet ID est déjà utilisé par un autre appareil.",
-      "missing_name": "Veuillez saisir un nom."
+      "missing_name": "Veuillez saisir un nom.",
+      "debug_failed": "La passerelle n'a pas accepté la commande du mode debug."
     },
     "abort": {
       "already_configured": "Cet appareil est déjà configuré.",
-      "no_configured_devices": "Aucun appareil configuré."
+      "no_configured_devices": "Aucun appareil configuré.",
+      "not_loaded": "La passerelle n'est pas chargée."
     }
   },
   "entity": {

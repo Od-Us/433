@@ -33,6 +33,7 @@
           "edit": "Edit a device (name, additional IDs, settings)",
           "modify": "Change the primary ID of a device",
           "remove": "Remove device",
+          "monitor": "Signal monitor (decoded / raw)",
           "settings": "Gateway settings"
         }
       },
@@ -137,6 +138,15 @@
           "target": "Use this ID for",
           "name": "Name (new device only)"
         }
+      },
+      "monitor": {
+        "title": "Signal monitor",
+        "description": "{status}\n\nLast {count} lines (most recent at the bottom). **Submit to refresh.**\n\n{lines}\n\n*Decoded*: packets of the protocols recognised by the gateway, with their values. *Raw*: every line exchanged with the gateway, unmodified. To also see the pulse sequences of the received signals, including those the gateway does not recognise, choose a pulse mode: it is switched off when you close this window, and after 10 minutes at most.",
+        "data": {
+          "level": "Level",
+          "raw_mode": "Pulse sequences (raw level)",
+          "filter": "Filter (text contained in the line)"
+        }
       }
     },
     "error": {
@@ -146,11 +156,13 @@
       "already_configured": "This RFLink ID is already configured.",
       "invalid_alias": "Invalid additional ID (wrong format, or same as the primary ID).",
       "alias_conflict": "This ID is already used by another device.",
-      "missing_name": "Please enter a name."
+      "missing_name": "Please enter a name.",
+      "debug_failed": "The gateway did not accept the debug mode command."
     },
     "abort": {
       "already_configured": "This device is already configured.",
-      "no_configured_devices": "No devices configured."
+      "no_configured_devices": "No devices configured.",
+      "not_loaded": "The gateway is not loaded."
     }
   },
   "entity": {

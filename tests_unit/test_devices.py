@@ -161,3 +161,67 @@ def test_describe_and_preview():
 def test_recent_info_for_remote():
     assert d.recent_info_for(RECENT, "Kaku_42")["data"]["SWITCH"] == "2"
     assert d.recent_info_for(RECENT, "Nope_1") is None
+
+
+def _hhmmss(ts):
+    import time as _t
+
+    return _t.strftime("%H:%M:%S", _t.gmtime(ts))
+
+
+def test_describe_seen():
+    info = {"first_seen": 3600.0, "last_seen": 3600.0 + 125, "count": 4}
+    assert d.describe_seen(info, _hhmmss, "1re", "dern.") == (
+        "1re 01:00:00 · dern. 01:02:05 · 4×"
+    )
+    once = {"last_seen": 60.0}
+    assert d.describe_seen(once, _hhmmss) == "last 00:01:00 · 1×"
+    assert d.describe_seen(None, _hhmmss) == ""
+
+
+def test_monitor_lines_levels():
+    from conftest import protocol as p
+
+    history = []
+    for ts, direction, raw in [
+        (1.0, "out", "10;PING;"),
+        (2.0, "in", "20;01;PONG;"),
+        (3.0, "in", "20;02;Oregon TempHygro;ID=0A4C;TEMP=00ba;HUM=40;"),
+        (4.0, "out", "10;Kaku;41;1;ON;"),
+        (5.0, "in", "20;03;OK;"),
+        (6.0, "in", "20;04;DEBUG;Pulses=90;Pulses(uSec)=1200,450,1200;"),
+        (7.0, "in", "garbage line"),
+    ]:
+        pkt = p.parse_line(raw) if direction == "in" else None
+        history.append(
+            {
+                "ts": ts,
+                "dir": direction,
+                "raw": raw,
+                "kind": pkt.kind if pkt else None,
+                "protocol": pkt.protocol if pkt else None,
+                "device_id": pkt.device_id if pkt else None,
+                "fields": pkt.fields if pkt else {},
+            }
+        )
+
+    decoded = d.monitor_lines(
+        history,
+        d.LEVEL_DECODED,
+        _hhmmss,
+        names={"Oregon TempHygro_0A4C": "Garden"},
+    )
+    assert decoded == [
+        "00:00:03 ← Oregon TempHygro 0A4C [Garden] · 18.6°C · 40%",
+        "00:00:04 → 10;Kaku;41;1;ON;",
+    ]
+
+    raw = d.monitor_lines(history, d.LEVEL_RAW, _hhmmss)
+    assert len(raw) == 7
+    assert raw[5] == "00:00:06 ← 20;04;DEBUG;Pulses=90;Pulses(uSec)=1200,450,1200;"
+    assert raw[6] == "00:00:07 ← garbage line"
+
+    assert d.monitor_lines(history, d.LEVEL_RAW, _hhmmss, text_filter="pulses") == [
+        raw[5]
+    ]
+    assert len(d.monitor_lines(history, d.LEVEL_RAW, _hhmmss, limit=2)) == 2

@@ -250,3 +250,55 @@ async def test_write_error_during_handshake_reconnects():
     await wait_for(lambda: hub.connected)
     assert len(opened) == 2
     await hub.stop()
+
+
+async def test_history_first_seen_and_count():
+    gw = FakeGateway()
+    hub, _, _ = make_hub(gw)
+    hub.start()
+    await wait_for(lambda: hub.connected)
+    gw.feed("20;01;Kaku;ID=41;SWITCH=1;CMD=ON;")
+    gw.feed("garbage")
+    await wait_for(lambda: any(e["raw"] == "garbage" for e in hub.history))
+    first = hub.recent_devices["Kaku_41_1"]["first_seen"]
+    await asyncio.sleep(0.01)
+    gw.feed("20;02;Kaku;ID=41;SWITCH=1;CMD=OFF;")
+    await wait_for(lambda: hub.recent_devices["Kaku_41_1"]["count"] == 2)
+    info = hub.recent_devices["Kaku_41_1"]
+    assert info["first_seen"] == first < info["last_seen"]
+    raws = [e["raw"] for e in hub.history]
+    assert "10;VERSION;" in raws  # sent frames are recorded too
+    await hub.stop()
+
+
+async def test_debug_mode_on_off_and_auto_off():
+    class DebugGateway(FakeGateway):
+        def write(self, data):
+            frame = data.decode().strip()
+            if "DEBUG=" in frame:
+                self.written.append(frame)
+                # Firmware echoes the setting instead of OK
+                self.feed("20;99;" + frame[3:])
+                return
+            super().write(data)
+
+    gw = DebugGateway()
+    hub, _, _ = make_hub(gw)
+    hub.start()
+    await wait_for(lambda: hub.connected)
+
+    await hub.async_set_debug_mode("unknown")
+    assert hub.debug_mode == "unknown"
+    assert gw.written[-1] == "10;RFUDEBUG=ON;"
+
+    await hub.async_set_debug_mode("all")
+    assert gw.written[-2:] == ["10;RFUDEBUG=OFF;", "10;RFDEBUG=ON;"]
+
+    await hub.async_set_debug_mode(None)
+    assert hub.debug_mode is None
+    assert gw.written[-1] == "10;RFDEBUG=OFF;"
+
+    await hub.async_set_debug_mode("unknown", auto_off=0.02)
+    await wait_for(lambda: hub.debug_mode is None)
+    assert gw.written[-1] == "10;RFUDEBUG=OFF;"
+    await hub.stop()

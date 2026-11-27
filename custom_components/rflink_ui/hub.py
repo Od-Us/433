@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -48,6 +48,14 @@ MAX_RECONNECT_DELAY = 60.0
 HANDSHAKE_ATTEMPTS = 3
 HANDSHAKE_TIMEOUT = 2.5
 RECENT_DEVICES_MAX = 50
+HISTORY_MAX = 300
+DEBUG_AUTO_OFF = 600.0  # seconds
+
+DIR_IN = "in"
+DIR_OUT = "out"
+
+# Raw debug modes: name -> firmware setting
+DEBUG_MODES = {"unknown": "RFUDEBUG", "all": "RFDEBUG"}
 
 Opener = Callable[[str, int], Awaitable[tuple[asyncio.StreamReader, Any]]]
 
@@ -106,6 +114,10 @@ class RFLinkHub:
             "reconnects": 0,
         }
         self.recent_devices: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        # Every line exchanged with the gateway, for the signal monitor.
+        self.history: deque[dict[str, Any]] = deque(maxlen=HISTORY_MAX)
+        self.debug_mode: str | None = None
+        self._debug_off_handle: asyncio.TimerHandle | None = None
 
     # ------------------------------------------------------------------ state
 
@@ -118,6 +130,9 @@ class RFLinkHub:
         if self._connected == value:
             return
         self._connected = value
+        if not value:
+            # Opening the port reboots the board, which clears its debug mode.
+            self.debug_mode = None
         try:
             self._on_connection(value)
         except Exception:  # pragma: no cover - defensive
@@ -136,6 +151,9 @@ class RFLinkHub:
     async def stop(self) -> None:
         """Stop the connection loop and close the port."""
         self._stopping = True
+        if self._debug_off_handle is not None:
+            self._debug_off_handle.cancel()
+            self._debug_off_handle = None
         if self._run_task is not None:
             self._run_task.cancel()
             try:
@@ -262,10 +280,22 @@ class RFLinkHub:
     def handle_line(self, line: str) -> Packet | None:
         """Process one line received from (or simulated for) the gateway."""
         _LOGGER.debug("RFLink <- %s", line)
+        now = time.time()
         packet = parse_line(line)
+        self.history.append(
+            {
+                "ts": now,
+                "dir": DIR_IN,
+                "raw": line,
+                "kind": packet.kind if packet else None,
+                "protocol": packet.protocol if packet else None,
+                "device_id": packet.device_id if packet else None,
+                "fields": packet.fields if packet else {},
+            }
+        )
         if packet is None:
             return None
-        self.last_received = time.time()
+        self.last_received = now
 
         if packet.kind == KIND_RESPONSE:
             if self._pending is not None and not self._pending.done():
@@ -278,12 +308,14 @@ class RFLinkHub:
 
         if packet.kind == KIND_DEVICE:
             assert packet.device_id is not None
-            self.recent_devices.pop(packet.device_id, None)
+            previous = self.recent_devices.pop(packet.device_id, None) or {}
             self.recent_devices[packet.device_id] = {
                 "type": packet.device_type,
                 "protocol": packet.protocol,
                 "data": packet.fields,
-                "last_seen": self.last_received,
+                "first_seen": previous.get("first_seen", now),
+                "last_seen": now,
+                "count": previous.get("count", 0) + 1,
             }
             while len(self.recent_devices) > RECENT_DEVICES_MAX:
                 self.recent_devices.popitem(last=False)
@@ -305,6 +337,17 @@ class RFLinkHub:
             self._pending = loop.create_future()
             try:
                 _LOGGER.debug("RFLink -> %s", frame.strip())
+                self.history.append(
+                    {
+                        "ts": time.time(),
+                        "dir": DIR_OUT,
+                        "raw": frame.strip(),
+                        "kind": None,
+                        "protocol": None,
+                        "device_id": None,
+                        "fields": {},
+                    }
+                )
                 writer.write(frame.encode("utf-8"))
                 await writer.drain()
                 return await asyncio.wait_for(asyncio.shield(self._pending), timeout)
@@ -338,3 +381,51 @@ class RFLinkHub:
 
         if not acked:
             raise RFLinkCommandError(f"RFLink did not acknowledge '{frame.strip()}'")
+
+    # ------------------------------------------------------------ debug mode
+
+    async def async_set_debug_mode(
+        self, mode: str | None, auto_off: float | None = DEBUG_AUTO_OFF
+    ) -> None:
+        """Enable a raw pulse debug mode of the gateway (None: disable).
+
+        ``unknown`` (RFUDEBUG) prints the pulses of signals the firmware does
+        not recognise; ``all`` (RFDEBUG) prints the pulses of every signal.
+        The mode is switched off automatically after ``auto_off`` seconds.
+        """
+        if mode is not None and mode not in DEBUG_MODES:
+            raise ValueError(f"Unknown debug mode {mode}")
+        if self._debug_off_handle is not None:
+            self._debug_off_handle.cancel()
+            self._debug_off_handle = None
+        if mode == self.debug_mode:
+            if mode is not None:
+                self._schedule_debug_off(auto_off)
+            return
+        if self.debug_mode is not None:
+            await self.async_send_command(
+                f"10;{DEBUG_MODES[self.debug_mode]}=OFF;", repeats=1
+            )
+            self.debug_mode = None
+        if mode is not None:
+            await self.async_send_command(f"10;{DEBUG_MODES[mode]}=ON;", repeats=1)
+            self.debug_mode = mode
+            self._schedule_debug_off(auto_off)
+
+    def _schedule_debug_off(self, delay: float | None) -> None:
+        if not delay:
+            return
+
+        def _off() -> None:
+            self._debug_off_handle = None
+            self._create_task(self.async_disable_debug(), "rflink_ui debug off")
+
+        self._debug_off_handle = asyncio.get_running_loop().call_later(delay, _off)
+
+    async def async_disable_debug(self) -> None:
+        try:
+            await self.async_set_debug_mode(None)
+        except RFLinkCommandError as err:
+            _LOGGER.debug("Could not disable RFLink debug mode: %s", err)
+            # The gateway resets its debug mode when it reboots/reconnects.
+            self.debug_mode = None

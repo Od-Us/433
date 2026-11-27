@@ -113,3 +113,9 @@ def test_invalid_value_goes_to_attributes():
     values, extra = p.decode_sensor_values({"TEMP": "zz"})
     assert values == {}
     assert extra == {"temperature_raw": "zz"}
+
+
+def test_debug_echo_is_ack():
+    pkt = p.parse_line("20;10;RFUDEBUG=ON;")
+    assert pkt.kind == p.KIND_RESPONSE
+    assert pkt.response == p.RESPONSE_OK

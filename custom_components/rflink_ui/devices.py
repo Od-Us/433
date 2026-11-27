@@ -13,7 +13,7 @@ Commands are always sent with the primary id.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from .const import (
@@ -22,7 +22,11 @@ from .const import (
     OPT_EVENTS,
     OPT_SENSORS,
 )
-from .protocol import TYPE_SENSOR, decode_sensor_values
+from .protocol import (
+    KIND_DEVICE,
+    TYPE_SENSOR,
+    decode_sensor_values,
+)
 
 CONF_ALIASES = "aliases"
 
@@ -234,3 +238,85 @@ def devices_for_learned(
             if alias is not None and alias not in taken:
                 result.append((key, device_id, alias))
     return result
+
+
+# ---------------------------------------------------------------------------
+# Reception times
+# ---------------------------------------------------------------------------
+
+
+def describe_seen(
+    info: Mapping[str, Any] | None,
+    fmt_time: Callable[[float], str],
+    first_label: str = "first",
+    last_label: str = "last",
+) -> str:
+    """``first 20:05:12 · last 20:17:40 · 14×`` for a recent_devices entry."""
+    if not info or info.get("last_seen") is None:
+        return ""
+    last = info["last_seen"]
+    first = info.get("first_seen", last)
+    count = info.get("count", 1)
+    if count <= 1 or first == last:
+        return f"{last_label} {fmt_time(last)} · 1×"
+    return f"{first_label} {fmt_time(first)} · {last_label} {fmt_time(last)} · {count}×"
+
+
+# ---------------------------------------------------------------------------
+# Signal monitor
+# ---------------------------------------------------------------------------
+
+LEVEL_DECODED = "decoded"
+LEVEL_RAW = "raw"
+MAX_RAW_LINE = 400
+_HIDDEN_OUT = ("10;PING;", "10;VERSION;")
+
+
+def monitor_lines(
+    history: Iterable[Mapping[str, Any]],
+    level: str,
+    fmt_time: Callable[[float], str],
+    *,
+    names: Mapping[str, str] | None = None,
+    text_filter: str = "",
+    limit: int = 30,
+) -> list[str]:
+    """Render the hub history for the monitor (most recent last).
+
+    * ``decoded``: packets of recognised protocols, with decoded values and
+      the name of the configured device, plus commands sent by Home Assistant.
+    * ``raw``: every line exchanged with the gateway, unmodified, including
+      the pulse sequences printed in debug mode and lines that are not
+      RFLink frames.
+    """
+    names = names or {}
+    needle = text_filter.strip().lower()
+    lines: list[str] = []
+    for entry in history:
+        raw = entry.get("raw", "")
+        if needle and needle not in raw.lower():
+            continue
+        arrow = "→" if entry.get("dir") == "out" else "←"
+        when = fmt_time(entry["ts"])
+
+        if level == LEVEL_RAW:
+            text = raw if len(raw) <= MAX_RAW_LINE else raw[: MAX_RAW_LINE - 1] + "…"
+            lines.append(f"{when} {arrow} {text}")
+            continue
+
+        if entry.get("dir") == "out":
+            if raw in _HIDDEN_OUT or "DEBUG=" in raw:
+                continue
+            lines.append(f"{when} {arrow} {raw}")
+            continue
+        if entry.get("kind") != KIND_DEVICE:
+            continue
+        device_id = entry.get("device_id") or ""
+        fields = entry.get("fields") or {}
+        label = f"{entry.get('protocol')} {fields.get('ID', '')}".strip()
+        name = names.get(device_id)
+        if name:
+            label += f" [{name}]"
+        lines.append(f"{when} {arrow} {label} · {describe_fields(fields)}")
+
+    return lines[-limit:] if limit else lines
